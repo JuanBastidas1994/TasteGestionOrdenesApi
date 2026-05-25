@@ -1,0 +1,24 @@
+RewriteEngine On
+
+RewriteCond %{SCRIPT_FILENAME} !-d  
+RewriteCond %{SCRIPT_FILENAME} !-f 
+
+#SIN PARAMETROS
+RewriteRule ^(.*)$ index.php/$1 [L]
+
+#OCULTAR LISTA DE DIRECTORIOS
+Options All -Indexes
+# ErrorDocument 404 http://192.168.68.210:82/week/administrator/api/path/mi404.php
+# ErrorDocument 403 http://192.168.68.210:82/week/administrator/api/path/mi403.php
+# ErrorDocument 500 http://192.168.68.210:82/week/administrator/api/path/mi500.php
+
+#IMPEDIR CUALQUIER ACCESO EXCEPTO
+#Order deny, allow
+#Deny from All
+#Allow from xxx.xxx.xxx.xxx
+
+#PERMITIR ACCESO A TODOS EXCEPTO
+#Order deny, allow
+#Allow from All
+#Deny from xxx.xxx.xxx.xxx
+#Deny from xxx.xxx.xxx.yyy

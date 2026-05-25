@@ -1,0 +1,9 @@
+/logs
+/cache/
+*.zip
+*.log
+*.txt
+.env
+.config
+*error_log
+config.php
