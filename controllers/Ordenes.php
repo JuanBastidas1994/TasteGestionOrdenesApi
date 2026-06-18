@@ -9,6 +9,7 @@ require_once "clases/cl_couriers.php";
 require_once "clases/cl_usuarios.php";
 require_once "clases/cl_sucursales.php";
 require_once "clases/cl_productos.php";
+require_once "helpers/notificationsToClient.php";
 $Clordenes = new cl_ordenes();
 $ClCouriers = new cl_couriers();
 $ClUsuarios = new cl_usuarios();
@@ -430,14 +431,9 @@ function asignarOrden($input){
 	if($asignacion){
 		$return['success'] = 1;
 		$return['mensaje'] = "Orden asignada correctamente";
-			
-		//NOTIFICAR
-		$notificar = [];
-		$notificar["id"] = "usuarios";
-		$notificar["order_status"] = "ASIGNADA";
-		$notificar["cod_usuario"] = $orden['cod_usuario'];
-		$notificar = json_encode($notificar);
-		$return["notificar"] = notificarOrdenes($notificar);
+
+		//NOTIFICAR AL CLIENTE (push Expo, no Firebase)
+		$return["notificar"] = notificarClientePush($orden, "ASIGNADA");
 	}else{
 		$error = ($msgError !== "") ? $msgError : "No se pudo asignar la orden";
 		$return['success'] = 0;
@@ -870,10 +866,12 @@ function setEstado($input){
 		$return['mensaje'] = "Orden cambiada a $MinusEstado correctamente";
 		$return['newStatus'] = $estado;
 		$return['is_envio'] = (int)$orden["is_envio"];
+
+		$return['notificar'] = notificarClientePush($orden, $estado);
+
 		if($estado == "ENTREGADA"){
 		    //204 es 400Grados
             if(cod_empresa == 70 || cod_empresa == 204){
-                require_once "helpers/notificationsToClient.php";
                 $return['ultramsg'] = sendMessageWhatsappVideo($orden);
                 $return['video'] = "Se intento enviar";
             }

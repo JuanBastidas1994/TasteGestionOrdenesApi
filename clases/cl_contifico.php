@@ -309,6 +309,29 @@ class cl_contifico
 		return json_decode($response,true);
 	}
 
+	public function AddPayment($id, $data) {
+		if($this->API == ""){
+			$this->msgError = "Empresa no tiene configurado Contifico";
+			return false;
+		}
+		$json = json_encode($data);
+		$ch = curl_init($this->URL."/documento/$id/cobro/");
+		$headers = array();
+		$headers[] = 'Content-Type: application/json';
+		$headers[] = 'Authorization: '.$this->API;
+		curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");
+		curl_setopt($ch, CURLOPT_POSTFIELDS, $json);
+		curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+		$response = curl_exec($ch);
+		if($response === false){
+			$this->msgError = "Curl error: " . curl_error($ch);
+			return false;
+		}
+		curl_close($ch);
+		return json_decode($response, true);
+	}
+
 	public function saveErrorFactura($cod_orden, $motivo){
 		$fecha = fecha();
 		$query = "INSERT INTO tb_orden_errores
