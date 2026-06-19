@@ -20,6 +20,7 @@ function notificarClientePush($orden, $estado){
 	return enviarExpoPush($tokens, $texto['titulo'], $texto['mensaje'], [
 		"orden_id" => $cod_orden,
 		"estado"   => $estado,
+        "type" => "order_tracking"
 	]);
 }
 

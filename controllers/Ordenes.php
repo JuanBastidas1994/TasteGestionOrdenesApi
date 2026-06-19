@@ -549,6 +549,10 @@ function asignarFlota($input){
 	    
 	require_once "helpers/notificationUser.php";
 	notifyAsignacionFlota($cod_orden, $cod_flota, $texto_adicional);
+
+
+	//NOTIFICAR AL CLIENTE (push Expo, no Firebase)
+	$return["notificar"] = notificarClientePush($orden, "ASIGNADA");
 	    
 	$return['success'] = 1;
 	$return['mensaje'] = "Orden asignada correctamente";
