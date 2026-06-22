@@ -3,6 +3,7 @@ class cl_runfood
 {
     public $URL = "";
     public $userId = "";
+    public $apiKey = "";
     public $msgError = "";
 	public $cod_empresa;
 
@@ -13,20 +14,21 @@ class cl_runfood
     public function getCredentials(){
 
     }
-    
+
     public function getSucursal($cod_sucursal){
         $cod_empresa = $this->cod_empresa;
-        $query = "SELECT s.cod_sucursal, s.nombre, s.direccion, rs.cod_runfood_sucursal, rs.dominio, rs.usuario_id, rs.facturar, rs.tipo_documento
+        $query = "SELECT s.cod_sucursal, s.nombre, s.direccion, rs.cod_runfood_sucursal, rs.dominio, rs.usuario_id, rs.api_key, rs.facturar, rs.tipo_documento
                 FROM tb_sucursales s
                 INNER JOIN tb_runfood_sucursal rs ON s.cod_sucursal = rs.cod_sucursal
                 WHERE s.cod_sucursal = $cod_sucursal
                 AND s.estado IN ('A', 'I')";
-        $sucursal = Conexion::buscarRegistro($query);       
+        $sucursal = Conexion::buscarRegistro($query);
         if($sucursal){
             $this->URL = $sucursal['dominio'];
             $this->userId = $sucursal['usuario_id'];
+            $this->apiKey = $sucursal['api_key'];
         }
-        return $sucursal;       
+        return $sucursal;
     }
 
     public function getAllProductsByOffices($cod_sucursal){
@@ -96,6 +98,66 @@ class cl_runfood
         }
 	}
 
+    /** Nueva API de Runfood: POST /orders, auth por header X-Api-Key (no más wrapping de tablet/usuario). */
+    public function createOrder($data){
+        $ch = curl_init($this->URL . "/orders");
+        $headers = [
+            'Content-Type: application/json',
+            'X-Api-Key: ' . $this->apiKey,
+        ];
+
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data, JSON_NUMERIC_CHECK));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        $response = curl_exec($ch);
+
+        $info = curl_getinfo($ch);
+        if ($info['http_code'] == 409) {
+            // external_id ya existe: Runfood devuelve el id del pedido existente en vez de duplicar
+            curl_close($ch);
+            return json_decode($response, true);
+        }
+
+        $msg = "";
+        if ($this->curlErrors($ch, $response, $msg)) {
+            curl_close($ch);
+            return json_decode($response, true);
+        } else {
+            $this->msgError = $msg;
+            curl_close($ch);
+            return false;
+        }
+    }
+
+    /** Nueva API de Runfood: DELETE /orders/{id}. Solo funciona mientras la orden esté en estado 'open'. */
+    public function cancelOrder($id, $motivo = null){
+        $ch = curl_init($this->URL . "/orders/$id");
+        $headers = [
+            'Content-Type: application/json',
+            'X-Api-Key: ' . $this->apiKey,
+        ];
+
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "DELETE");
+        if ($motivo) {
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(["reason" => $motivo]));
+        }
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        $response = curl_exec($ch);
+
+        $msg = "";
+        if ($this->curlErrors($ch, $response, $msg)) {
+            curl_close($ch);
+            return $response === "" ? ['success' => true] : json_decode($response, true);
+        } else {
+            $this->msgError = $msg;
+            curl_close($ch);
+            return false;
+        }
+    }
+
+    /** @deprecated API previa de Runfood (PEDIDO/INSERT con wrapping tablet/usuario). */
     public function armarTrama($data = null){
         $trama = null;
         if($data !== null){

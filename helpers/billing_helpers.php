@@ -44,6 +44,15 @@ function getEnvioyAdicionalByAlias($alias, $cod_empresa, $ruc_id, $cod_sistema) 
     return Conexion::buscarRegistro($query);
 }
 
+function getFacturacionElectronica($cod_empresa) {
+    $query = "SELECT ef.*, f.nombre
+              FROM tb_empresa_facturacion ef
+              INNER JOIN tb_sistema_facturacion f ON ef.cod_sistema_facturacion = f.cod_sistema_facturacion
+              WHERE ef.cod_empresa = $cod_empresa AND ef.estado = 'A'
+              ORDER BY ef.prioridad";
+    return Conexion::buscarVariosRegistro($query);
+}
+
 function noRound($value, $option) {
     if ($option) {
         $parts = explode(".", $value);

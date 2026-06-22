@@ -16,6 +16,7 @@ $funciones = array(
 	"contifico"   => "controllers/Contifico.php",
 	"runfood"   => "controllers/Runfood.php",
 	"facturas"   => "controllers/Facturas.php",
+	"facturacion" => "controllers/Facturacion.php",
 	"printer"   => 	"controllers/Printer.php",
     "ordenes"   => 	"controllers/Ordenes.php",
 	"sucursales" => "controllers/Sucursales.php",
