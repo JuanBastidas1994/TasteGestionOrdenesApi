@@ -41,4 +41,17 @@ interface BillingProviderInterface {
 
     /** Registra un error de facturación (puede ser no-op según el proveedor). */
     public function saveError(int $cod_orden, string $motivo): void;
+
+    /**
+     * Valida precondiciones propias del proveedor antes de anular (ej: Runfood exige
+     * que la orden ya esté anulada localmente). Retorna true si puede continuar;
+     * false y escribe $mensaje si no.
+     */
+    public function canVoid(int $cod_orden, string &$mensaje): bool;
+
+    /**
+     * Ajusta el inventario en el proveedor tras crear ($tipo='EGR') o anular ($tipo='ING')
+     * una factura. No-op (success=1, skipped=true) para proveedores que no gestionan inventario.
+     */
+    public function adjustInventory(int $cod_orden, string $tipo): array;
 }

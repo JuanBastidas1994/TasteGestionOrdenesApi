@@ -124,6 +124,104 @@ class ContificoProvider implements BillingProviderInterface {
         $this->client->saveErrorFactura($cod_orden, $motivo);
     }
 
+    public function canVoid(int $cod_orden, string &$mensaje): bool {
+        return true;
+    }
+
+    /**
+     * Port de controllers/Contifico.php::setInventario(), reutilizando $this->client
+     * ya configurado por getInfoSucursal(). El controller /contifico/inventario/* se deja
+     * intacto para no afectar el flujo manual existente.
+     */
+    public function adjustInventory(int $cod_orden, string $tipo): array {
+        require_once "clases/cl_ordenes.php";
+        require_once "clases/cl_productos.php";
+        $ClOrdenes   = new cl_ordenes();
+        $ClProductos = new cl_productos();
+
+        $orden = $ClOrdenes->getOrden($cod_orden);
+        if (!$orden) {
+            return ['success' => 0, 'mensaje' => 'Orden no existe'];
+        }
+
+        $contificoSucursal = $this->client->getInfoBySucursal($orden["cod_sucursal"]);
+        if (!$contificoSucursal) {
+            return ['success' => 0, 'mensaje' => 'La sucursal no tiene configurado un pto de emisión'];
+        }
+        $this->client->API = $contificoSucursal["api"];
+
+        if ((int)$contificoSucursal["inventario"] == 0) {
+            return ['success' => 1, 'mensaje' => 'Inventario no habilitado para esta sucursal', 'skipped' => true];
+        }
+
+        $detalleOrden = $ClOrdenes->getOrdenDetalle($cod_orden);
+        if (!$detalleOrden) {
+            return ['success' => 0, 'mensaje' => 'Orden detalle no existe'];
+        }
+
+        $detalles = [];
+        foreach ($detalleOrden as $detOrden) {
+            $opciones = $detOrden["opciones"];
+            if ($opciones) {
+                foreach ($opciones as $opcion) {
+                    foreach ($opcion["detalles"] as $detalle) {
+                        $productoFromOpcionDetalle = $ClProductos->getProductFromOpcionDetalleIsDatabase($detalle["id"], $contificoSucursal["cod_contifico_empresa"]);
+                        if ($productoFromOpcionDetalle) {
+                            $detalles[] = [
+                                "producto_id" => $productoFromOpcionDetalle["id"],
+                                "cantidad"    => number_format($detalle["cantidad"] * $detOrden["cantidad"], 2),
+                                "precio"      => $productoFromOpcionDetalle["precio"],
+                            ];
+                        }
+
+                        $productoOpcionesIngrendientes = $ClProductos->getProductoOpcionesIngredientes($detalle["id"], $contificoSucursal["cod_contifico_empresa"]);
+                        if ($productoOpcionesIngrendientes) {
+                            foreach ($productoOpcionesIngrendientes as $prodOpcIngredientes) {
+                                $detalles[] = [
+                                    "producto_id" => $prodOpcIngredientes["id"],
+                                    "cantidad"    => number_format(($prodOpcIngredientes["valor"] * $detalle["cantidad"]) * $detOrden["cantidad"], 2),
+                                    "precio"      => $prodOpcIngredientes["precio"],
+                                ];
+                            }
+                        }
+                    }
+                }
+            }
+
+            $recipientes = $ClOrdenes->getRecipientesByRuc($cod_orden, cod_empresa, $contificoSucursal["cod_contifico_empresa"]);
+            foreach ($recipientes as $recipiente) {
+                $detalles[] = [
+                    "producto_id" => $recipiente["id"],
+                    "cantidad"    => number_format($recipiente["cantidad"], 2),
+                    "precio"      => $recipiente["precio"],
+                ];
+            }
+        }
+
+        $msj = $tipo == "ING" ? "ingresó" : "descontó";
+
+        if (count($detalles) == 0) {
+            return ['success' => 0, 'mensaje' => "No se $msj inventario"];
+        }
+
+        $inventario = [
+            "tipo"        => $tipo,
+            "fecha"       => date_format(date_create(fecha_only()), 'd/m/Y'),
+            "bodega_id"   => $contificoSucursal["id_bodega"],
+            "detalles"    => $detalles,
+            "descripcion" => "Compra mediante la WEB",
+        ];
+
+        $respInventario = $this->client->setInventario($inventario);
+        if ($respInventario && isset($respInventario["codigo"])) {
+            $ClOrdenes->saveOrdenInventario($cod_orden, $this->client->cod_contifico_empresa, $tipo, $respInventario["codigo"], $respInventario["id"]);
+            return ['success' => 1, 'mensaje' => "Se $msj inventario", 'data' => $respInventario];
+        }
+
+        $msgError = $respInventario["mensaje"] ?? $this->client->msgError;
+        return ['success' => 0, 'mensaje' => "No se $msj inventario. Detalle: $msgError", 'data' => $respInventario];
+    }
+
     // ─── Privados ────────────────────────────────────────────────────────────
 
     private function armarSchema(int $cod_orden, bool $anular, array $infoFacturacion, string &$mensaje) {
