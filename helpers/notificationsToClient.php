@@ -53,17 +53,17 @@ function getTextoClientePush($estado, $is_envio){
 		],
 		"ENVIANDO" => [
 			"delivery" => [
-				"titulo"  => "Tu pedido está en camino",
-				"mensaje" => "La persona encargada salió con tu pedido, pronto te llamará para coordinar la entrega.",
+				"titulo"  => "🛵 Tu pedido va en camino",
+				"mensaje" => "Nuestro repartidor ya salió con tu pedido. Llegará pronto.",
 			],
 		],
 		"ENTREGADA" => [
 			"delivery" => [
-				"titulo"  => "Tu pedido ha sido entregado con éxito",
+				"titulo"  => "🎉 Pedido entregado",
 				"mensaje" => "Disfruta tu pedido! Si tienes algún comentario, no dudes en calificarnos.",
 			],
 			"pickup" => [
-				"titulo"  => "Tu pedido ha sido entregado con éxito",
+				"titulo"  => "🎉 Pedido entregado",
 				"mensaje" => "Gracias por recogerlo! Si tienes algún comentario, no dudes en calificarnos.",
 			],
 		],
@@ -71,6 +71,16 @@ function getTextoClientePush($estado, $is_envio){
 			"delivery" => [
 				"titulo"  => "No pudimos entregar tu pedido",
 				"mensaje" => "Hubo un problema durante la entrega, nos pondremos en contacto contigo.",
+			],
+		],
+		"ANULADA" => [
+			"delivery" => [
+				"titulo"  => "Tu pedido fue anulado",
+				"mensaje" => "Lamentamos informarte que tu pedido ha sido anulado.",
+			],
+			"pickup" => [
+				"titulo"  => "Tu pedido fue anulado",
+				"mensaje" => "Lamentamos informarte que tu pedido ha sido anulado.",
 			],
 		],
 	];

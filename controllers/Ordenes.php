@@ -985,6 +985,9 @@ function cancelarOrden($input){ //TODO: Terminar Cancelar Orden
 		$return['newStatus'] = $estado;
 		$return['anularPago'] = $Clordenes->isPagoTarjeta($cod_orden);
 		$return['anularFactura'] = $Clordenes->isFactElectronica($cod_orden);
+
+		//NOTIFICAR AL CLIENTE (push Expo, no Firebase)
+		$return["notificar"] = notificarClientePush($orden, "ANULADA");
 	}else{
 		$return['success'] = 0;
 		$return['mensaje'] = "No se pudo cambiar de estado la orden a ".$MinusEstado;
@@ -1515,6 +1518,11 @@ function generarLink($input){
 		$return['mensaje'] = "Link generado correctamente";
 		$return['token'] = $token;
 		$return['phone'] = $phone;
+
+		//NOTIFICAR AL CLIENTE (push Expo, no Firebase)
+		$return["notificar"] = notificarClientePush($orden, "ASIGNADA");
+
+
 	}else{
 		$return['success'] = 0;
 		$return['mensaje'] = ($msgError !== "") ? $msgError : "No se pudo asignar la orden";
