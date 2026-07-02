@@ -18,7 +18,7 @@ function notificarClientePush($orden, $estado){
 	$texto = getTextoClientePush($estado, $is_envio);
 
 	return enviarExpoPush($tokens, $texto['titulo'], $texto['mensaje'], [
-		"orden_id" => $cod_orden,
+		"orden_id" => generarTracking($cod_orden),
 		"estado"   => $estado,
         "type" => "order_tracking"
 	]);
