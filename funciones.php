@@ -557,4 +557,10 @@ function sumarTiempo($cantidad, $tiempo){
     return $mifecha->format('Y-m-d H:i:s');
 }
 
+
+function generarTracking($cod_orden) {
+    $sig = substr(hash_hmac('sha256', (string)$cod_orden, TRACKING_SECRET), 0, 12);
+    return rtrim(base64_encode($cod_orden . '.' . $sig), '=');
+}
+
 // ob_end_flush();
