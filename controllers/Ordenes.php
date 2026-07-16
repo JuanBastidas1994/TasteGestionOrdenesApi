@@ -143,6 +143,7 @@ function listaOrdenes($input){
 	$ordenes = $Clordenes->listaGestionOrdenes($estado, $tipo, $cod_sucursal);
 	if($ordenes){
 		foreach ($ordenes as $key => $item) {
+			$ordenes[$key]['is_envio'] = (string)$item['is_envio'];
 			$ordenes[$key]['mesa_tipo'] = $mesa_tipo;
 
 			$ordenes[$key]['creada']['fecha'] = fechaLatinoShort($item['fecha']);
@@ -277,6 +278,7 @@ function detalleOrden($cod_orden){
 
 	$orden = $Clordenes->getOrden($cod_orden);
 	if($orden){
+		$orden['is_envio'] = (string)$orden['is_envio'];
 		$orden['mesa_tipo'] = $empresa ? $empresa['mesa_tipo'] : 'NUMERO';
 
 		$sucursal = $ClSucursales->get($orden['cod_sucursal']);
