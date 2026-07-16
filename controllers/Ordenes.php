@@ -126,7 +126,7 @@ function listaOrdenes($input){
     global $Clordenes;
 	//global $ClUsuarios;
 	global $ClCouriers;
-	
+
     $errorMsg = "";
 	$datosObligatorios = array("estado","tipo","cod_sucursal");
     if(!validate($datosObligatorios, $input, $errorMsg)){
@@ -136,9 +136,17 @@ function listaOrdenes($input){
     }
 	extract($input);
 
+	require_once "clases/cl_empresas.php";
+	$ClEmpresas = new cl_empresas();
+	$empresa = $ClEmpresas->get();
+	$mesa_tipo = $empresa ? $empresa['mesa_tipo'] : 'NUMERO';
+
 	$ordenes = $Clordenes->listaGestionOrdenes($estado, $tipo, $cod_sucursal);
 	if($ordenes){
 		foreach ($ordenes as $key => $item) {
+			$ordenes[$key]['is_envio'] = (string)$item['is_envio'];
+			$ordenes[$key]['mesa_tipo'] = $mesa_tipo;
+
 			$ordenes[$key]['creada']['fecha'] = fechaLatinoShort($item['fecha']);
 			$ordenes[$key]['creada']['hora'] = getHourToDateTime($item['fecha']);
 			$ordenes[$key]['creada']['agoText'] = 
@@ -271,6 +279,9 @@ function detalleOrden($cod_orden){
 
 	$orden = $Clordenes->getOrden($cod_orden);
 	if($orden){
+		$orden['is_envio'] = (string)$orden['is_envio'];
+		$orden['mesa_tipo'] = $empresa ? $empresa['mesa_tipo'] : 'NUMERO';
+
 		$sucursal = $ClSucursales->get($orden['cod_sucursal']);
 		$Clordenes->sucursal_grava_iva = $sucursal["grava_iva"];
 

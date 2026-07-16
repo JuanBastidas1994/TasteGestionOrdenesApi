@@ -12,10 +12,10 @@ class cl_ordenes
 	public function listaGestionOrdenes($estado, $envio, $cod_sucursal){
 	    $fecha = fecha_only();
 		$cod_empresa = cod_empresa;
-		$query = "SELECT ca.cod_orden as id, ca.cod_usuario, ca.cod_sucursal, ca.cod_courier, ca.fecha, ca.total, ca.is_envio, ca.is_programado, ca.hora_retiro, ca.pago, ca.referencia as direccion, ca.estado
+		$query = "SELECT ca.cod_orden as id, ca.cod_usuario, ca.cod_sucursal, ca.cod_courier, ca.fecha, ca.total, ca.is_envio, ca.is_programado, ca.hora_retiro, ca.pago, ca.referencia as direccion, ca.estado, ca.mesa_referencia
 					, ca.order_token as token, u.nombre, u.correo, u.telefono, u.imagen
 					FROM tb_orden_cabecera ca, tb_usuarios u
-					WHERE ca.cod_usuario = u.cod_usuario 
+					WHERE ca.cod_usuario = u.cod_usuario
 					AND ca.estado = '$estado'
 					AND ca.cod_sucursal = $cod_sucursal
 					AND ca.cod_empresa = $cod_empresa
@@ -82,9 +82,9 @@ class cl_ordenes
 
 	public function getOrden($cod_orden){
 		$cod_empresa = cod_empresa;
-		$query = "SELECT cod_orden as id, cod_usuario, cod_sucursal, cod_courier, fecha, estado, cod_descuento as cupon_descuento, 
-					subtotal, subtotal0, subtotal12, descuento, envio, envio_iva, iva, iva_porcentaje, service, total, is_envio, is_programado, hora_retiro, latitud, longitud, telefono, referencia as direccion, referencia2, pago, 
-					is_suelto, monto_suelto, medio_compra, observacion, order_token, is_altademanda
+		$query = "SELECT cod_orden as id, cod_usuario, cod_sucursal, cod_courier, fecha, estado, cod_descuento as cupon_descuento,
+					subtotal, subtotal0, subtotal12, descuento, envio, envio_iva, iva, iva_porcentaje, service, total, is_envio, is_programado, hora_retiro, latitud, longitud, telefono, referencia as direccion, referencia2, pago,
+					is_suelto, monto_suelto, medio_compra, observacion, order_token, is_altademanda, mesa_referencia
 				FROM tb_orden_cabecera 
 				WHERE cod_empresa = $cod_empresa 
 				AND cod_orden = $cod_orden";

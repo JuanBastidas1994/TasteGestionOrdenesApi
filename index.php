@@ -128,7 +128,7 @@ function mylog($texto, $title=""){
     $folder = "logs/".alias;
     
     if (!file_exists($folder)) {
-        mkdir($folder, 0777);
+        mkdir($folder, 0777, true);
     }
     $file = $folder."/".$request[0].".log";
     $log = "[".fecha()."] ".$title." ".$texto;
@@ -140,7 +140,7 @@ function logGeneral($server, $texto){
     $folder = "logs/".alias;
     
     if (!file_exists($folder)) {
-        mkdir($folder, 0777);
+        mkdir($folder, 0777, true);
     }
     $file = $folder."/todas-las-entradas.log";
     $endpoint = $server['REQUEST_URI'];
