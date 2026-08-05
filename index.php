@@ -18,6 +18,7 @@ $funciones = array(
 	"facturas"   => "controllers/Facturas.php",
 	"facturacion" => "controllers/Facturacion.php",
 	"printer"   => 	"controllers/Printer.php",
+	"impresoras"   => 	"controllers/Impresoras.php",
     "ordenes"   => 	"controllers/Ordenes.php",
 	"sucursales" => "controllers/Sucursales.php",
     "puntos" => "controllers/Fidelizacion.php",

@@ -125,6 +125,17 @@ class ContificoProvider implements BillingProviderInterface {
     }
 
     public function canVoid(int $cod_orden, string &$mensaje): bool {
+        $factura = ExistFacturaToOrden($cod_orden);
+        if (!$factura) {
+            $mensaje = "La orden $cod_orden no tiene una factura activa para anular";
+            return false;
+        }
+
+        if (empty($factura['fecha']) || date('Y-m-d', strtotime($factura['fecha'])) !== date('Y-m-d')) {
+            $mensaje = "La factura solo se puede anular el mismo día en que fue enviada";
+            return false;
+        }
+
         return true;
     }
 
@@ -269,7 +280,11 @@ class ContificoProvider implements BillingProviderInterface {
             }
         }
 
-        $contifico['fecha_emision'] = date("d/m/Y", strtotime($orden['fecha']));
+        // El SRI ya no acepta comprobantes con fecha de emisión pasada: si la orden es de un
+        // día anterior, se factura con la fecha de hoy (no se toca la fecha de la orden).
+        $fechaOrden = strtotime($orden['fecha']);
+        $esFechaPasada = date('Y-m-d', $fechaOrden) < date('Y-m-d');
+        $contifico['fecha_emision'] = date("d/m/Y", $esFechaPasada ? time() : $fechaOrden);
         $contifico['autorizacion']  = "123456789";
         $contifico['caja_id']       = "";
         $contifico['electronico']   = true;
