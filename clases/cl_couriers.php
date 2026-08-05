@@ -18,10 +18,10 @@ class cl_couriers
 	}
 	
 	public function getFlota($cod_orden){
-		$query = "SELECT of.cod_flota as id, e.nombre, CONCAT(e.alias,'/',e.logo) as imagen 
-                    FROM tb_ordenes_flota of
-                    INNER JOIN tb_empresas e ON e.cod_empresa = of.cod_flota AND e.estado = 'A'
-                    WHERE of.cod_orden = $cod_orden";
+		$query = "SELECT ofl.cod_flota as id, e.nombre, CONCAT(e.alias,'/',e.logo) as imagen 
+                    FROM tb_ordenes_flota ofl
+                    INNER JOIN tb_empresas e ON e.cod_empresa = ofl.cod_flota AND e.estado = 'A'
+                    WHERE ofl.cod_orden = $cod_orden";
 		$flota = Conexion::buscarRegistro($query);
         if($flota){
             $flota['imagen'] = url_business_assets.$flota['imagen'];

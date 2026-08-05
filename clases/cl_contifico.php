@@ -17,10 +17,11 @@ class cl_contifico
 
 	public function getInfoBySucursal($cod_sucursal) {
 		$query = "SELECT *
-					FROM tb_contifico_sucursal cs, tb_contifico_empresa ce, tb_contifico_empresa_postokens cep
-					WHERE cs.cod_contifico_empresa = ce.cod_contifico_empresa
-					AND cs.cod_contifico_empresa = cep.cod_contifico_empresa
-					AND cs.cod_sucursal = $cod_sucursal";
+				FROM tb_contifico_sucursal cs, tb_contifico_empresa ce, tb_contifico_empresa_postokens cep
+				WHERE cs.cod_contifico_empresa = ce.cod_contifico_empresa
+				AND cs.cod_contifico_empresa = cep.cod_contifico_empresa
+				AND cs.cod_postoken = cep.cod_postoken
+				AND cs.cod_sucursal =$cod_sucursal";
 		return Conexion::buscarRegistro($query);
 	}
 

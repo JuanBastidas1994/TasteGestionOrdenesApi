@@ -31,12 +31,12 @@ function getTextoClientePush($estado, $is_envio){
 	$textos = [
 		"ACEPTADA" => [
 			"delivery" => [
-				"titulo"  => "Tu orden ha sido aceptada",
-				"mensaje" => "Ya estamos preparando tu pedido para enviártelo.",
+				"titulo"  => "¡Manos a la obra! 👨‍🍳",
+				"mensaje" => "El restaurante ya está preparando tu pedido.",
 			],
 			"pickup" => [
-				"titulo"  => "Tu orden ha sido aceptada",
-				"mensaje" => "Ya estamos preparando tu pedido, te avisaremos cuando esté listo para recoger.",
+				"titulo"  => "¡Manos a la obra! 👨‍🍳",
+				"mensaje" => "El restaurante ya está preparando tu pedido, te avisaremos cuando esté listo para recoger.",
 			],
 		],
 		"PREPARANDO" => [
@@ -45,12 +45,8 @@ function getTextoClientePush($estado, $is_envio){
 				"mensaje" => "Ya estamos preparando tu pedido, no olvides venir a recogerlo.",
 			],
 		],
-		"ASIGNADA" => [
-			"delivery" => [
-				"titulo"  => "Tu pedido fue asignado",
-				"mensaje" => "Se le ha asignado un motorizado a tu pedido.",
-			],
-		],
+		// ASIGNADA ya no notifica al cliente — es un detalle interno (qué motorizado quedó a
+		// cargo) sin utilidad real para él; "Preparando" ya cubre ese momento del flujo.
 		"ENVIANDO" => [
 			"delivery" => [
 				"titulo"  => "🛵 Tu pedido va en camino",

@@ -793,11 +793,11 @@ class cl_ordenes
                   tb_orden_cabecera oc 
                   INNER JOIN tb_usuarios u ON oc.cod_usuario = u.cod_usuario 
                   AND oc.cod_courier = 101 
-                  INNER JOIN tb_ordenes_flota of on of.cod_orden = oc.cod_orden 
+                  INNER JOIN tb_ordenes_flota ofe on ofe.cod_orden = oc.cod_orden 
                   INNER JOIN tb_sucursales s on s.cod_sucursal = oc.cod_sucursal
                   INNER JOIN tb_empresas e on e.cod_empresa = oc.cod_empresa $filtroComercios
                 WHERE 
-                  of.cod_flota = $cod_empresa 
+                  ofe.cod_flota = $cod_empresa 
                   $filtroEstados" ;
 		$ordenes = Conexion::buscarVariosRegistro($query);	
 		foreach($ordenes as $key => $orden){
