@@ -67,13 +67,29 @@ class cl_productos
     }
 
     public function getProductFromOpcionDetalleIsDatabase($cod_producto_opcion_detalle, $cod_contifico_empresa){
-        $query = "SELECT p.cod_producto, p.nombre, p.precio, pc.isDatabase, pd.item, pf.id, pf.name_in_contifico 
+        $query = "SELECT p.cod_producto, p.nombre, p.precio, pc.isDatabase, pd.item, pf.id, pf.name_in_contifico
                 FROM tb_productos_opciones_detalle pd
                 INNER JOIN tb_productos_opciones pc ON pd.cod_producto_opcion = pc.cod_producto_opcion AND pc.isDatabase = 1
                 INNER JOIN tb_productos p ON p.cod_producto = pd.item AND p.estado IN ('A', 'I')
                 INNER JOIN tb_productos_facturacion pf ON p.cod_producto = pf.cod_producto AND pf.cod_contifico_empresa = $cod_contifico_empresa
                 WHERE debitInventario = 1
                 AND pd.cod_producto_opciones_detalle = $cod_producto_opcion_detalle";
+        return Conexion::buscarRegistro($query);
+    }
+
+    /**
+     * Igual que getProductFromOpcionDetalleIsDatabase pero sin el filtro de debitInventario:
+     * ese flag es exclusivo del movimiento de inventario manual y no debe condicionar si una
+     * opción se factura o no. Usado por los proveedores de facturación para armar la línea de
+     * factura de una opción tipo-producto (ya ligada a Contífico vía tb_productos_facturacion).
+     */
+    public function getFacturacionProductoOpcion($cod_producto_opciones_detalle, $cod_contifico_empresa) {
+        $query = "SELECT p.cod_producto, p.nombre, p.cobra_iva, pf.id
+                FROM tb_productos_opciones_detalle pd
+                INNER JOIN tb_productos_opciones pc ON pd.cod_producto_opcion = pc.cod_producto_opcion AND pc.isDatabase = 1
+                INNER JOIN tb_productos p ON p.cod_producto = pd.item AND p.estado IN ('A', 'I')
+                INNER JOIN tb_productos_facturacion pf ON p.cod_producto = pf.cod_producto AND pf.cod_contifico_empresa = $cod_contifico_empresa
+                WHERE pd.cod_producto_opciones_detalle = $cod_producto_opciones_detalle";
         return Conexion::buscarRegistro($query);
     }
 

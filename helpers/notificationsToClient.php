@@ -7,7 +7,13 @@
    ========================================================================== */
 
 // Punto único de entrada: llamar esta función desde Ordenes.php
+// Estados que son detalles internos del flujo y no deben notificar al cliente.
+$ESTADOS_SIN_NOTIFICACION = ["ASIGNADA"];
+
 function notificarClientePush($orden, $estado){
+	global $ESTADOS_SIN_NOTIFICACION;
+	if(in_array($estado, $ESTADOS_SIN_NOTIFICACION)) return false;
+
 	$cod_usuario = $orden['cod_usuario'];
 	$is_envio    = $orden['is_envio'];
 	$cod_orden   = isset($orden['id']) ? $orden['id'] : (isset($orden['cod_orden']) ? $orden['cod_orden'] : null);
@@ -88,6 +94,27 @@ function getTextoClientePush($estado, $is_envio){
 		"titulo"  => "Actualización de tu pedido",
 		"mensaje" => "El estado de tu orden ha cambiado a " . strtolower($estado),
 	];
+}
+
+/**
+ * Recordatorio de calificación, disparado por cron/recordatorio_calificacion.php 30 minutos
+ * después de ENTREGADA — no es una transición de estado real, por eso vive aparte de
+ * getTextoClientePush()/notificarClientePush(). Reusa el mismo type/orden_id "order_tracking"
+ * que el resto: el tracking de un pedido ENTREGADA ya muestra el componente de calificación
+ * (ver TasteAppExpo RateUs.jsx / ClosedOrderView.jsx), así que no hace falta una ruta nueva.
+ */
+function notificarRecordatorioCalificacion($orden){
+	$cod_usuario = $orden['cod_usuario'];
+	$cod_orden   = $orden['cod_orden'];
+
+	$tokens = getPushTokensCliente($cod_usuario);
+	if(empty($tokens)) return false;
+
+	return enviarExpoPush($tokens, "¿Qué tal estuvo todo? ⭐", "Cuéntanos cómo fue tu experiencia con este pedido", [
+		"orden_id" => generarTracking($cod_orden),
+		"estado"   => "ENTREGADA",
+		"type"     => "order_tracking",
+	]);
 }
 
 // Tokens Expo del usuario (puede tener varios dispositivos)
