@@ -30,7 +30,9 @@ class ContificoProvider implements BillingProviderInterface {
     }
 
     public function sendInvoice(int $cod_orden, array $schema, array $infoFacturacion): array {
+        mylogFile("contifico_facturas", json_encode($schema), "TRAMA_ENVIADA cod_orden=$cod_orden");
         $respFactura = $this->client->CreateFactura($schema);
+        mylogFile("contifico_facturas", json_encode($respFactura), "RESPUESTA_CONTIFICO cod_orden=$cod_orden");
         $idContifico = isset($respFactura['id']) ? $respFactura['id'] : 0;
 
         if ($idContifico !== 0) {
@@ -69,7 +71,9 @@ class ContificoProvider implements BillingProviderInterface {
             return ['success' => 0, 'mensaje' => $msgError];
         }
 
+        mylogFile("contifico_facturas", json_encode($schema), "TRAMA_ANULACION cod_orden=$cod_orden");
         $respFactura = $this->client->EditFactura($schema);
+        mylogFile("contifico_facturas", json_encode($respFactura), "RESPUESTA_CONTIFICO_ANULACION cod_orden=$cod_orden");
         if (isset($respFactura['id'])) {
             return [
                 'success' => 1,
@@ -176,15 +180,11 @@ class ContificoProvider implements BillingProviderInterface {
             if ($opciones) {
                 foreach ($opciones as $opcion) {
                     foreach ($opcion["detalles"] as $detalle) {
-                        $productoFromOpcionDetalle = $ClProductos->getProductFromOpcionDetalleIsDatabase($detalle["id"], $contificoSucursal["cod_contifico_empresa"]);
-                        if ($productoFromOpcionDetalle) {
-                            $detalles[] = [
-                                "producto_id" => $productoFromOpcionDetalle["id"],
-                                "cantidad"    => number_format($detalle["cantidad"] * $detOrden["cantidad"], 2),
-                                "precio"      => $productoFromOpcionDetalle["precio"],
-                            ];
-                        }
-
+                        // Las opciones tipo-producto (isDatabase) ya viajan como línea propia en
+                        // la factura (armarSchema) — su descuento de inventario, si aplica, lo hace
+                        // Contífico automáticamente según la configuración de ese producto ahí.
+                        // Este egreso manual es solo para lo que NUNCA aparece como línea de
+                        // factura: ingredientes de la opción y recipientes.
                         $productoOpcionesIngrendientes = $ClProductos->getProductoOpcionesIngredientes($detalle["id"], $contificoSucursal["cod_contifico_empresa"]);
                         if ($productoOpcionesIngrendientes) {
                             foreach ($productoOpcionesIngrendientes as $prodOpcIngredientes) {
@@ -237,7 +237,9 @@ class ContificoProvider implements BillingProviderInterface {
 
     private function armarSchema(int $cod_orden, bool $anular, array $infoFacturacion, string &$mensaje) {
         require_once "clases/cl_ordenes.php";
-        $ClOrdenes = new cl_ordenes();
+        require_once "clases/cl_productos.php";
+        $ClOrdenes   = new cl_ordenes();
+        $ClProductos = new cl_productos();
         $orden = $ClOrdenes->get_orden_array($cod_orden);
 
         if (!$orden) {
@@ -340,7 +342,6 @@ class ContificoProvider implements BillingProviderInterface {
 
         // Detalle de productos
         $detalle = [];
-        $x = 0;
         foreach ($orden['detalle'] as $item) {
             $resp = getProductoById($item['cod_producto'], $infoFacturacion['cod_contifico_empresa']);
             if (!$resp) {
@@ -348,7 +349,7 @@ class ContificoProvider implements BillingProviderInterface {
                 return false;
             }
 
-            $detalle[$x] = [
+            $detalle[] = [
                 'producto_id'          => $resp['id'],
                 'cantidad'             => $item['cantidad'],
                 'precio'               => $item['precio_no_tax'],
@@ -362,63 +363,67 @@ class ContificoProvider implements BillingProviderInterface {
             ];
 
             if ($item["adicional_no_tax_unidad"] > 0) {
-                if ($cod_empresa == 24) { // Lógica especial empresa Danilo
-                    $opciones = $ClOrdenes->decodificarOpcionesByDetalle($item['descripcion']);
-                    foreach ($opciones as $opcion) {
-                        if ($this->getOpcionIsDatabase($opcion['id'])) {
-                            foreach ($opcion['detalles'] as $detail) {
-                                if ($detail['aumentar_precio'] != 1) continue;
-                                $optionitem = $this->getOptionDetalle($detail['id']);
-                                if (!$optionitem) {
-                                    $mensaje = "Ocurrió un problema al encontrar la opción " . $detail['nombre'];
-                                    return false;
-                                }
-                                $optionContifico = getProductoById($optionitem['cod_producto'], $infoFacturacion['cod_contifico_empresa']);
-                                if (!$optionContifico) {
-                                    $mensaje = "No existe el producto de la opción en el sistema, por favor verificar";
-                                    return false;
-                                }
-                                $x++;
-                                $qty    = $detail['cantidad'] * $item['cantidad'];
-                                $price  = number_format($optionitem['precio_no_tax'], 2);
-                                $base0  = ($optionitem['cobra_iva'] == 0) ? $price * $qty : 0;
-                                $base12 = ($optionitem['cobra_iva'] == 1) ? $price * $qty : 0;
-                                $detalle[$x] = [
-                                    'producto_id'          => $optionContifico['id'],
-                                    'cantidad'             => $qty,
-                                    'precio'               => $price,
-                                    'porcentaje_iva'       => $porcentaje_iva,
-                                    'porcentaje_descuento' => 0,
-                                    'base_cero'            => 0,
-                                    'base_gravable'        => number_format($base12, 2),
-                                    'base_no_gravable'     => number_format($base0, 2),
-                                    'valor_ice'            => 0,
-                                    'porcentaje_ice'       => 0,
-                                ];
-                            }
+                // Cada opción con costo se factura como línea propia contra el producto real ya
+                // ligado a Contífico (tb_productos_facturacion, el mismo mapeo que usa inventario).
+                // El precio siempre sale de la opción (tb_productos_opciones_detalle), nunca del
+                // catálogo del producto. Lo que no tenga producto ligado (opción abierta sin
+                // mapear) cae al genérico "Adicionales" como remanente.
+                // Se usa $item['opciones'] (ya decodificado por get_orden_array) en vez de
+                // re-decodificar $item['descripcion'], que get_orden_array() ya eliminó del array.
+                // La cantidad ahí ya viene multiplicada por la cantidad del item.
+                $opciones = $item['opciones'] ?? [];
+                $remanenteAdicionales = 0;
+
+                foreach ($opciones as $opcion) {
+                    foreach ($opcion['detalles'] as $detail) {
+                        if ($detail['aumentar_precio'] != 1) continue;
+
+                        $qty   = $detail['cantidad'];
+                        $price = (float)$detail['precio_adicional_no_tax'];
+                        if ($price <= 0) continue;
+
+                        $mapeo = $ClProductos->getFacturacionProductoOpcion($detail['id'], $infoFacturacion['cod_contifico_empresa']);
+                        if ($mapeo) {
+                            $base0  = ($mapeo['cobra_iva'] == 0) ? $price * $qty : 0;
+                            $base12 = ($mapeo['cobra_iva'] == 1) ? $price * $qty : 0;
+                            $detalle[] = [
+                                'producto_id'          => $mapeo['id'],
+                                'cantidad'             => $qty,
+                                'precio'               => number_format($price, 2),
+                                'porcentaje_iva'       => $porcentaje_iva,
+                                'porcentaje_descuento' => 0,
+                                'base_cero'            => 0,
+                                'base_gravable'        => number_format($base12, 2),
+                                'base_no_gravable'     => number_format($base0, 2),
+                                'valor_ice'            => 0,
+                                'porcentaje_ice'       => 0,
+                            ];
+                            continue;
                         }
+
+                        $remanenteAdicionales += $price * $qty;
                     }
-                } else {
+                }
+
+                if ($remanenteAdicionales > 0) {
                     if ($idAdicionalesEnProducto === "") {
                         $mensaje = "No esta ligado los adicionales con contífico, por favor ir al módulo de integraciones";
                         return false;
                     }
-                    $x++;
-                    $detalle[$x] = [
+                    $detalle[] = [
                         'producto_id'          => $idAdicionalesEnProducto,
-                        'cantidad'             => $item['cantidad'],
-                        'precio'               => $item["adicional_no_tax_unidad"],
+                        'cantidad'             => 1,
+                        'precio'               => number_format($remanenteAdicionales, 2),
                         'porcentaje_iva'       => $porcentaje_iva,
                         'porcentaje_descuento' => 0,
                         'base_cero'            => 0,
-                        'base_gravable'        => $item["adicional_no_tax_total"],
+                        'base_gravable'        => number_format($remanenteAdicionales, 2),
                         'base_no_gravable'     => 0,
                         'valor_ice'            => 0,
                         'porcentaje_ice'       => 0,
                     ];
                 }
             }
-            $x++;
         }
 
         // Envío como línea de producto
@@ -433,7 +438,7 @@ class ContificoProvider implements BillingProviderInterface {
                 $mensaje = "No esta ligado el servicio a Domicilio con contífico, por favor ir al módulo de integraciones";
                 return false;
             }
-            $detalle[$x] = [
+            $detalle[] = [
                 'producto_id'          => $resp['id'],
                 'cantidad'             => 1,
                 'precio'               => $orden['envio'],
@@ -469,27 +474,11 @@ class ContificoProvider implements BillingProviderInterface {
         }
         $contifico['cobros'] = $pagos;
 
-        mylogFile("logArmarFactura", json_encode($contifico), "CONTIFICO_SCHEMA");
-
         return $contifico;
     }
 
     private function getFormaPago(string $forma): string {
         $map = ['E' => 'EF', 'T' => 'TC', 'P' => 'EF', 'DB' => 'EF'];
         return $map[$forma] ?? 'EF';
-    }
-
-    private function getOpcionIsDatabase(int $cod_opcion): bool {
-        $query = "SELECT * FROM tb_productos_opciones WHERE cod_producto_opcion = $cod_opcion";
-        $resp = Conexion::buscarRegistro($query);
-        return $resp && $resp['isDatabase'] == 1;
-    }
-
-    private function getOptionDetalle(int $cod_opcion_detalle): ?array {
-        $query = "SELECT p.cod_producto, p.nombre, p.precio, p.precio_no_tax, p.cobra_iva
-                  FROM tb_productos_opciones_detalle od
-                  INNER JOIN tb_productos p ON p.cod_producto = od.item
-                  WHERE od.cod_producto_opciones_detalle = $cod_opcion_detalle";
-        return Conexion::buscarRegistro($query) ?: null;
     }
 }

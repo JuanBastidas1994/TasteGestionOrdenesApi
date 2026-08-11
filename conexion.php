@@ -13,8 +13,10 @@ class Conexion {
                 self::$conexion->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
                 /* Recupera con caracter especial de la base de datos */
                 self::$conexion->exec("SET NAMES 'utf8mb4'");
-                /* Igualar sql_mode a PROD solo para este proyecto */
-                self::$conexion->exec("SET SESSION sql_mode='IGNORE_SPACE,NO_ENGINE_SUBSTITUTION'");
+                /* Igualar sql_mode a PROD solo para este proyecto, solo en DEV */
+                if (ENVIRONMENT === 'development') {
+                    self::$conexion->exec("SET SESSION sql_mode='IGNORE_SPACE,NO_ENGINE_SUBSTITUTION'");
+                }
             } catch (Exception $ex) {
                 print 'Error :' . $ex->getMessage() . "<br>";
             }

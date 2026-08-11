@@ -2,11 +2,9 @@
 require_once "clases/cl_usuarios.php";
 require_once "clases/cl_contifico.php";
 require_once "clases/cl_ordenes.php";
-require_once "clases/cl_productos.php";
 $ClUsuarios = new cl_usuarios();
 $ClContifico = new cl_contifico();
 $ClOrdenes = new cl_ordenes();
-$ClProductos = new cl_productos();
 
 if($method == "GET"){
 	$num_variables = count($request);
@@ -108,144 +106,14 @@ function getOrdenesByDocumento($code){
     return $return;
 }
 
+/**
+ * Endpoint legacy, reemplazado por ContificoProvider::adjustInventory() (llamado automáticamente
+ * desde controllers/Facturacion.php). Se deja como tripwire: si algo todavía le pega, debe
+ * notarse en vez de mover inventario en paralelo al flujo nuevo (riesgo de doble descuento).
+ */
 function setInventario($tipo) {
-    global $ClOrdenes;
-    global $ClProductos;
-    global $ClContifico;
-    global $input;
-    extract($input);
-
-    $orden = $ClOrdenes->getOrden($cod_orden);
-    if(!$orden) {
-        $return['success'] = 0;
-        $return['mensaje'] = "Orden no existe";
-        return $return;
-    }
-
-    $contificoSucursal = $ClContifico->getInfoBySucursal($orden["cod_sucursal"]);
-    if(!$contificoSucursal){
-        $return["success"] = 0;
-        $return["mensaje"] = "La sucursal no tiene configurado un pto de emisión";
-        return false;
-    } 
-    $ClContifico->API = $contificoSucursal["api"];
-
-    if((int)$contificoSucursal["inventario"] == 0) {
-        $return['success'] = 0;
-        $return['mensaje'] = "No hay permiso para descontar inventario";
-        return $return;
-    }
-
-    $detalleOrden = $ClOrdenes->getOrdenDetalle($cod_orden);
-    if(!$detalleOrden) {
-        $return['success'] = 0;
-        $return['mensaje'] = "Orden detalle no existe";
-        return $return;
-    }
-
-    $detalles = []; //Se envía a contifico
-
-    foreach ($detalleOrden as $detOrden) {
-        /* 
-        //OBTENER INGREDIENTES DEL PRODUCTO
-        $productoIngrendientes = $ClProductos->getProductoIngredientes($detOrden["product_id"]);
-        $productoOpciones = $ClProductos->getProductoOpciones($detOrden["product_id"]);
-
-        if($productoIngrendientes) {
-            foreach ($productoIngrendientes as $prodIngredientes) {
-                $pIng = [];
-                $pIng["producto_id"] = $prodIngredientes["id_contifico"];
-                $pIng["cantidad"] = number_format($prodIngredientes["valor"] * $detOrden["cantidad"], 2);
-                $pIng["precio"] = $prodIngredientes["precio"];
-                
-                $detalles[] = $pIng;
-            }
-        } */
-
-        //OBTENER INGREDIENTES DE LAS OPCIONES DEL PRODUCTO
-        $opciones = $detOrden["opciones"];
-        if($opciones) {
-            foreach ($opciones as $opcion) {
-                foreach ($opcion["detalles"] as $detalle) {
-                    //Buscar el producto contifico cuando la opcion detalle este ligado a un producto taste
-                    $productoFromOpcionDetalle = $ClProductos->getProductFromOpcionDetalleIsDatabase($detalle["id"],$contificoSucursal["cod_contifico_empresa"]);
-                    if($productoFromOpcionDetalle){
-                        $pIng = [];
-                        $pIng["producto_id"] = $productoFromOpcionDetalle["id"];
-                        $pIng["cantidad"] = number_format($detalle["cantidad"] * $detOrden["cantidad"], 2);
-                        $pIng["precio"] = $productoFromOpcionDetalle["precio"];
-                        
-                        $detalles[] = $pIng;
-                    }
-
-                    //Buscar ingredientes en los productos
-                    $productoOpcionesIngrendientes = $ClProductos->getProductoOpcionesIngredientes($detalle["id"], $contificoSucursal["cod_contifico_empresa"]);
-                    if($productoOpcionesIngrendientes) {
-                        foreach ($productoOpcionesIngrendientes as $prodOpcIngredientes) {
-                            $pIng = [];
-                            $pIng["producto_id"] = $prodOpcIngredientes["id"];
-                            $pIng["cantidad"] = number_format(($prodOpcIngredientes["valor"] * $detalle["cantidad"]) * $detOrden["cantidad"], 2);
-                            $pIng["precio"] = $prodOpcIngredientes["precio"];
-                            
-                            $detalles[] = $pIng;
-                        }
-                    }
-                }
-            }
-        }
-        
-        //OBTENER RECIPIENTES DE LA ORDEN
-        $recipientes = $ClOrdenes->getRecipientesByRuc($cod_orden, cod_empresa, $contificoSucursal["cod_contifico_empresa"]);
-        foreach($recipientes as $recipiente){
-            $pIng = [];
-            $pIng["producto_id"] = $recipiente["id"];
-            $pIng["cantidad"] = number_format($recipiente["cantidad"], 2);
-            $pIng["precio"] = $recipiente["precio"];
-            
-            $detalles[] = $pIng;
-        }
-        
-    }
-
-    $msj = "descontó";
-    if($tipo == "ING")
-        $msj = "ingresó";
-    
-    if(count($detalles) > 0) {
-
-        $inventario["tipo"] = $tipo;
-        $inventario["fecha"] = date_format(date_create(fecha_only()), 'd/m/Y');  ;
-        $inventario["bodega_id"] = $contificoSucursal["id_bodega"];
-        $inventario["detalles"] = $detalles;
-        $inventario["descripcion"] = "Compra mediante la WEB";
-
-       /*  $return['success'] = 1;
-        $return['mensaje'] = "Se $msj inventario";
-        $return['data'] = $inventario;
-        return $return; */
-
-        $respInventario = $ClContifico->setInventario($inventario);
-        if($respInventario) {
-            if(isset($respInventario["codigo"])) {
-                $ClOrdenes->saveOrdenInventario($cod_orden, $ClContifico->cod_contifico_empresa, $tipo, $respInventario["codigo"], $respInventario["id"]);
-                $return['success'] = 1;
-                $return['mensaje'] = "Se $msj inventario";
-                $return['respcontifico'] = $respInventario;
-                return $return;
-            }
-            else {
-                $return['success'] = 0;
-                $return['mensaje'] = "No se $msj inventario, " . $respInventario["mensaje"];
-                $return['data'] = $respInventario;
-                return $return;
-            }
-        }
-        $return['success'] = 0;
-        $return['mensaje'] = "Error, no se $msj inventario";
-        return $return;
-    }
     $return['success'] = 0;
-    $return['mensaje'] = "No se $msj inventario";
+    $return['mensaje'] = "Función de facturación obsoleta, por favor actualizar!";
     return $return;
 }
 ?>
