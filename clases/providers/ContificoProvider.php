@@ -315,7 +315,19 @@ class ContificoProvider implements BillingProviderInterface {
 
         if ($usuario) {
             if ($usuario['num_documento'] !== "") {
-                if (strlen($usuario['num_documento']) == 13) {
+                $tipoCliente  = $this->inferirTipoCliente($usuario['num_documento']);
+                $esExtranjero = !empty($usuario['is_extranjero']);
+
+                if ($esExtranjero) {
+                    // Extranjero: no se calcula RUC, el documento va tal cual.
+                    $cliente['ruc'] = "";
+                    if ($tipoCliente !== 'J') {
+                        $cliente['cedula'] = $usuario['num_documento'];
+                    }
+                } else if ($tipoCliente == 'J') {
+                    // Jurídico: Contífico no acepta el campo "cedula" en la trama, solo "ruc".
+                    $cliente['ruc'] = $usuario['num_documento'];
+                } else if (strlen($usuario['num_documento']) == 13) {
                     $cliente['ruc']    = $usuario['num_documento'];
                     $cliente['cedula'] = substr($usuario['num_documento'], 0, 10);
                 } else {
@@ -325,9 +337,9 @@ class ContificoProvider implements BillingProviderInterface {
                 $cliente['razon_social']  = $usuario['nombre'];
                 $cliente['telefonos']     = $usuario['telefono'];
                 $cliente['direccion']     = $usuario['direccion'];
-                $cliente['tipo']          = $this->inferirTipoCliente($usuario['num_documento']);
+                $cliente['tipo']          = $tipoCliente;
                 $cliente['email']         = $usuario['correo'];
-                $cliente['es_extranjero'] = false;
+                $cliente['es_extranjero'] = $esExtranjero;
             } else {
                 $cliente['cedula']        = "9999999999";
                 $cliente['ruc']           = "9999999999001";
