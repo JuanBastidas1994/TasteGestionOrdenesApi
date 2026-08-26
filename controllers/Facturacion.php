@@ -6,8 +6,9 @@ require_once "clases/cl_ordenes.php";
 if ($method == "POST") {
     $num_variables = count($request);
     if ($num_variables == 2) {
-        if ($request[1] == "electronica") showResponse(facturar());
-        if ($request[1] == "anular")      showResponse(anular());
+        if ($request[1] == "electronica")            showResponse(facturar());
+        if ($request[1] == "anular")                 showResponse(anular());
+        if ($request[1] == "incrementar-secuencial") showResponse(incrementarSecuencial());
     }
     showResponse(['success' => 0, 'mensaje' => 'Evento no existente en Methodo POST']);
 } else {
@@ -56,6 +57,37 @@ function facturar(): array {
         $result['inventario'] = $provider->adjustInventory($id, "EGR");
     }
     return $result;
+}
+
+/**
+ * Parche manual para cuando Contifico ya aceptó una factura pero el secuencial local
+ * no llegó a subir (proceso caído entre el envío y el incremento). Solo hace un +1 al
+ * secuencial de la sucursal/tipo de documento correspondiente; no reintenta el envío.
+ */
+function incrementarSecuencial(): array {
+    global $input;
+
+    if (!isset($input['id'])) return ['success' => 0, 'mensaje' => 'Campo id es obligatorio'];
+    $id = $input['id'];
+
+    $ClOrdenes = new cl_ordenes();
+    $orden = $ClOrdenes->get_orden_array($id);
+    if (!$orden) return ['success' => 0, 'mensaje' => 'La orden no existe'];
+
+    $provider = BillingProviderFactory::makeForEmpresa(cod_empresa);
+    if (!$provider) return ['success' => 0, 'mensaje' => 'La empresa no tiene un sistema de facturación electrónica habilitado'];
+    if (!($provider instanceof ContificoProvider)) {
+        return ['success' => 0, 'mensaje' => 'Esta acción solo aplica para facturación con Contifico'];
+    }
+
+    if (ExistFacturaToOrden($id)) {
+        return ['success' => 0, 'mensaje' => "La orden $id ya tiene una factura creada, no es necesario subir el secuencial"];
+    }
+
+    $infoFacturacion = $provider->getInfoSucursal($orden["cod_sucursal"]);
+    if (!$infoFacturacion) return ['success' => 0, 'mensaje' => 'La sucursal no tiene configurado un pto de emisión'];
+
+    return $provider->bumpSecuencial($infoFacturacion);
 }
 
 function anular(): array {

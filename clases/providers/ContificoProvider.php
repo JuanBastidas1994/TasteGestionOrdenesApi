@@ -128,6 +128,19 @@ class ContificoProvider implements BillingProviderInterface {
         $this->client->saveErrorFactura($cod_orden, $motivo);
     }
 
+    /**
+     * Parche manual para el caso en que Contifico ya recibió una factura pero el
+     * secuencial local no llegó a incrementarse (proceso caído entre CreateFactura y
+     * incrementSecuencial). Se dispara a mano desde el modal de error de reenvío.
+     */
+    public function bumpSecuencial(array $infoFacturacion): array {
+        $ok = $this->client->incrementSecuencial($infoFacturacion['cod_sucursal'], $infoFacturacion['tipo_documento']);
+        if (!$ok) {
+            return ['success' => 0, 'mensaje' => 'No se pudo actualizar el secuencial'];
+        }
+        return ['success' => 1, 'mensaje' => 'Secuencial actualizado correctamente'];
+    }
+
     public function canVoid(int $cod_orden, string &$mensaje): bool {
         $factura = ExistFacturaToOrden($cod_orden);
         if (!$factura) {
@@ -312,7 +325,7 @@ class ContificoProvider implements BillingProviderInterface {
                 $cliente['razon_social']  = $usuario['nombre'];
                 $cliente['telefonos']     = $usuario['telefono'];
                 $cliente['direccion']     = $usuario['direccion'];
-                $cliente['tipo']          = "N";
+                $cliente['tipo']          = $this->inferirTipoCliente($usuario['num_documento']);
                 $cliente['email']         = $usuario['correo'];
                 $cliente['es_extranjero'] = false;
             } else {
@@ -480,5 +493,21 @@ class ContificoProvider implements BillingProviderInterface {
     private function getFormaPago(string $forma): string {
         $map = ['E' => 'EF', 'T' => 'TC', 'P' => 'EF', 'DB' => 'EF'];
         return $map[$forma] ?? 'EF';
+    }
+
+    /**
+     * El tipo de persona ya está codificado en el propio número de documento (convención
+     * SRI): RUC de 13 dígitos con tercer dígito 9 = jurídico, 6 = público (entidad, se
+     * factura igual que jurídico), 0-5 = natural con RUC. Cédula de 10 dígitos = natural.
+     * No depende de que el cliente lo declare ni de datos guardados en otras tablas.
+     */
+    private function inferirTipoCliente(string $numDocumento): string {
+        if (strlen($numDocumento) == 13) {
+            $tercerDigito = (int)$numDocumento[2];
+            if ($tercerDigito === 9 || $tercerDigito === 6) {
+                return "J";
+            }
+        }
+        return "N";
     }
 }

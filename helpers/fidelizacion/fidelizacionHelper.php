@@ -25,9 +25,10 @@ function procesarFidelizacion(int $cod_orden, int $cod_empresa): bool
 
     // Datos de la orden para obtener cod_usuario
     $ordenDb = Conexion::buscarRegistro(
-        "SELECT cod_usuario FROM tb_orden_cabecera WHERE cod_orden = $cod_orden"
+        "SELECT cod_usuario, cod_empresa FROM tb_orden_cabecera WHERE cod_orden = $cod_orden"
     );
     if (!$ordenDb) return false;
+    if ((int)$ordenDb['cod_empresa'] !== (int)$cod_empresa) return false;
 
     // Cargar cliente asociado al usuario de la orden
     $cliente = new cl_clientes();

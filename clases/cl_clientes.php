@@ -128,10 +128,11 @@ class cl_clientes
 					WHERE c.cod_orden = op.cod_orden
 					AND c.cod_usuario = u.cod_usuario
 					AND u.cod_usuario = $cod_usuario
+					AND c.cod_empresa = ".cod_empresa."
 					AND c.estado IN('ENTREGADA','CREADA')
 					AND op.estado = 0";
 		$resp = Conexion::buscarVariosRegistro($query);
-        return $resp;			
+        return $resp;
 	}
 	
 	public function getPagosAumentar($cod_orden){
