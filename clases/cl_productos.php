@@ -49,11 +49,12 @@ class cl_productos
     } 
 
     public function getProductoOpcionesIngredientes($cod_producto_opcion, $cod_contifico_empresa) {
-        $query = "SELECT pi.cod_producto_opcion_ingrediente, i.cod_ingrediente, i.ingrediente, pi.valor, i.cod_unidad_medida, ifc.id, i.precio
-                    FROM tb_productos_opciones_ingredientes pi, tb_ingredientes i, tb_ingredientes_facturacion ifc
-                    WHERE pi.cod_ingrediente = i.cod_ingrediente
-                    AND ifc.cod_ingrediente = i.cod_ingrediente
-                    AND pi.cod_producto_opcion = $cod_producto_opcion
+        $query = "SELECT pi.cod_producto_opcion_ingrediente, i.cod_ingrediente, i.ingrediente, pi.valor, i.cod_unidad_medida, um.nombre AS unidad_nombre, ifc.id, i.precio
+                    FROM tb_productos_opciones_ingredientes pi
+                    INNER JOIN tb_ingredientes i ON pi.cod_ingrediente = i.cod_ingrediente
+                    INNER JOIN tb_ingredientes_facturacion ifc ON ifc.cod_ingrediente = i.cod_ingrediente
+                    LEFT JOIN tb_unidades_medidas um ON um.cod_unidad_medida = i.cod_unidad_medida
+                    WHERE pi.cod_producto_opcion = $cod_producto_opcion
                     AND ifc.cod_contifico_empresa = $cod_contifico_empresa";
         return Conexion::buscarVariosRegistro($query);
     }
