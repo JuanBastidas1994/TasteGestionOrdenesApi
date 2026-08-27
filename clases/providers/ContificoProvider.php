@@ -162,6 +162,49 @@ class ContificoProvider implements BillingProviderInterface {
      * intacto para no afectar el flujo manual existente.
      */
     public function adjustInventory(int $cod_orden, string $tipo): array {
+        $built = $this->buildInventoryPayload($cod_orden, $tipo);
+        if (!$built['success'] || !empty($built['skipped'])) {
+            return $built;
+        }
+        $inventario = $built['inventario'];
+
+        // "nombre"/"unidad" solo son para lectura humana (modal de detalle) — Contifico no los
+        // documenta como campo válido, así que no se le envían.
+        $paraEnviar = $inventario;
+        $paraEnviar['detalles'] = array_map(function ($d) {
+            unset($d['nombre'], $d['unidad']);
+            return $d;
+        }, $inventario['detalles']);
+
+        require_once "clases/cl_ordenes.php";
+        $ClOrdenes = new cl_ordenes();
+        $msj = $tipo == "ING" ? "ingresó" : "descontó";
+
+        $respInventario = $this->client->setInventario($paraEnviar);
+        if ($respInventario && isset($respInventario["codigo"])) {
+            // Se guarda el payload exacto que se calculó (con nombre/unidad incluidos, para que el
+            // detalle sea legible después), no el que se le envió sin esos campos a Contifico.
+            $ClOrdenes->saveOrdenInventario($cod_orden, $this->client->cod_contifico_empresa, $tipo, $respInventario["codigo"], $respInventario["id"], json_encode($inventario));
+            return ['success' => 1, 'mensaje' => "Se $msj inventario", 'data' => $respInventario];
+        }
+
+        $msgError = $respInventario["mensaje"] ?? $this->client->msgError;
+        return ['success' => 0, 'mensaje' => "No se $msj inventario. Detalle: $msgError", 'data' => $respInventario];
+    }
+
+    /**
+     * Igual que adjustInventory() pero sin llamar a Contifico ni guardar nada — solo arma el
+     * mismo payload para mostrarlo en el modal de "qué se enviaría" cuando aún no se ha debitado.
+     */
+    public function previewInventory(int $cod_orden, string $tipo): array {
+        $built = $this->buildInventoryPayload($cod_orden, $tipo);
+        if (!$built['success'] || !empty($built['skipped'])) {
+            return $built;
+        }
+        return ['success' => 1, 'mensaje' => 'Vista previa generada', 'inventario' => $built['inventario']];
+    }
+
+    private function buildInventoryPayload(int $cod_orden, string $tipo): array {
         require_once "clases/cl_ordenes.php";
         require_once "clases/cl_productos.php";
         $ClOrdenes   = new cl_ordenes();
@@ -174,7 +217,7 @@ class ContificoProvider implements BillingProviderInterface {
 
         $contificoSucursal = $this->client->getInfoBySucursal($orden["cod_sucursal"]);
         if (!$contificoSucursal) {
-            return ['success' => 0, 'mensaje' => 'La sucursal no tiene configurado un pto de emisión'];
+            return ['success' => 1, 'mensaje' => 'La sucursal no tiene configurado un pto de emisión', 'skipped' => true];
         }
         $this->client->API = $contificoSucursal["api"];
 
@@ -193,11 +236,30 @@ class ContificoProvider implements BillingProviderInterface {
             if ($opciones) {
                 foreach ($opciones as $opcion) {
                     foreach ($opcion["detalles"] as $detalle) {
-                        // Las opciones tipo-producto (isDatabase) ya viajan como línea propia en
-                        // la factura (armarSchema) — su descuento de inventario, si aplica, lo hace
-                        // Contífico automáticamente según la configuración de ese producto ahí.
-                        // Este egreso manual es solo para lo que NUNCA aparece como línea de
-                        // factura: ingredientes de la opción y recipientes.
+                        // Opción que es un producto ya ligado a Contífico pero NO se cobra aparte
+                        // (ej. la bebida de un combo): nunca aparece como línea de factura, así que
+                        // hay que descontar su stock directo aquí. Se controla con debitInventario
+                        // en tb_productos_opciones_detalle (configurable desde el dashboard). Si la
+                        // opción SÍ se cobra aparte y ya viaja como línea propia (ver armarSchema),
+                        // Contífico descuenta su stock solo con la factura — no duplicar aquí.
+                        $yaFacturadaComoLinea = $detalle['aumentar_precio'] == 1
+                            && $ClProductos->getFacturacionProductoOpcion($detalle["id"], $contificoSucursal["cod_contifico_empresa"]);
+                        if (!$yaFacturadaComoLinea) {
+                            $productoIsDb = $ClProductos->getProductFromOpcionDetalleIsDatabase($detalle["id"], $contificoSucursal["cod_contifico_empresa"]);
+                            if ($productoIsDb) {
+                                $detalles[] = [
+                                    "producto_id" => $productoIsDb["id"],
+                                    "cantidad"    => number_format($detalle["cantidad"] * $detOrden["cantidad"], 2),
+                                    "precio"      => $productoIsDb["precio"],
+                                    "nombre"      => $productoIsDb["nombre"],
+                                    "unidad"      => "unidad",
+                                ];
+                            }
+                        }
+
+                        // Ingredientes/receta de la opción (materia prima que nunca es un producto
+                        // vendible por sí solo). Independiente de lo anterior: si una opción tiene
+                        // AMBOS (producto ligado + receta de ingredientes), se envían los dos.
                         $productoOpcionesIngrendientes = $ClProductos->getProductoOpcionesIngredientes($detalle["id"], $contificoSucursal["cod_contifico_empresa"]);
                         if ($productoOpcionesIngrendientes) {
                             foreach ($productoOpcionesIngrendientes as $prodOpcIngredientes) {
@@ -205,6 +267,8 @@ class ContificoProvider implements BillingProviderInterface {
                                     "producto_id" => $prodOpcIngredientes["id"],
                                     "cantidad"    => number_format(($prodOpcIngredientes["valor"] * $detalle["cantidad"]) * $detOrden["cantidad"], 2),
                                     "precio"      => $prodOpcIngredientes["precio"],
+                                    "nombre"      => $prodOpcIngredientes["ingrediente"],
+                                    "unidad"      => $prodOpcIngredientes["unidad_nombre"] ?: $prodOpcIngredientes["cod_unidad_medida"],
                                 ];
                             }
                         }
@@ -218,17 +282,20 @@ class ContificoProvider implements BillingProviderInterface {
                     "producto_id" => $recipiente["id"],
                     "cantidad"    => number_format($recipiente["cantidad"], 2),
                     "precio"      => $recipiente["precio"],
+                    "nombre"      => $recipiente["nombre"],
+                    "unidad"      => "unidad",
                 ];
             }
         }
 
-        $msj = $tipo == "ING" ? "ingresó" : "descontó";
+        $msj = $tipo == "ING" ? "ingresar" : "descontar";
 
         if (count($detalles) == 0) {
-            return ['success' => 0, 'mensaje' => "No se $msj inventario"];
+            return ['success' => 1, 'mensaje' => "No hay nada que $msj de inventario", 'skipped' => true];
         }
 
         $inventario = [
+            "codigo"      => "TASTE" . $cod_orden, // Solo trazabilidad: Contifico no lo usa para deduplicar.
             "tipo"        => $tipo,
             "fecha"       => date_format(date_create(fecha_only()), 'd/m/Y'),
             "bodega_id"   => $contificoSucursal["id_bodega"],
@@ -236,14 +303,7 @@ class ContificoProvider implements BillingProviderInterface {
             "descripcion" => "Compra mediante la WEB",
         ];
 
-        $respInventario = $this->client->setInventario($inventario);
-        if ($respInventario && isset($respInventario["codigo"])) {
-            $ClOrdenes->saveOrdenInventario($cod_orden, $this->client->cod_contifico_empresa, $tipo, $respInventario["codigo"], $respInventario["id"]);
-            return ['success' => 1, 'mensaje' => "Se $msj inventario", 'data' => $respInventario];
-        }
-
-        $msgError = $respInventario["mensaje"] ?? $this->client->msgError;
-        return ['success' => 0, 'mensaje' => "No se $msj inventario. Detalle: $msgError", 'data' => $respInventario];
+        return ['success' => 1, 'inventario' => $inventario];
     }
 
     // ─── Privados ────────────────────────────────────────────────────────────

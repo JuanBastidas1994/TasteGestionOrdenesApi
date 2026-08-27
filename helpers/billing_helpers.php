@@ -22,6 +22,30 @@ function AnularOrdenFactura($pcod_orden) {
     return Conexion::ejecutar($query, NULL);
 }
 
+/** Última fila de facturación de la orden (una orden puede tener varias si se anuló y reenvió). */
+function getUltimaFacturaOrden($cod_orden) {
+    $query = "SELECT * FROM tb_orden_factura_electronica
+              WHERE cod_orden = $cod_orden
+              ORDER BY cod_orden_factura_electronica DESC LIMIT 1";
+    return Conexion::buscarRegistro($query);
+}
+
+/**
+ * NO_APLICA / NO_DEBITADO / DEBITADO describen el egreso de inventario por la venta;
+ * NO_REVERTIDO / REVERTIDO describen el ingreso de reversa cuando la factura se anula.
+ */
+function saveEstadoInventario($cod_orden, $estado) {
+    $query = "UPDATE tb_orden_factura_electronica
+              SET estado_inventario = '$estado'
+              WHERE cod_orden_factura_electronica = (
+                  SELECT cod_orden_factura_electronica FROM (
+                      SELECT MAX(cod_orden_factura_electronica) AS cod_orden_factura_electronica
+                      FROM tb_orden_factura_electronica WHERE cod_orden = $cod_orden
+                  ) t
+              )";
+    return Conexion::ejecutar($query, NULL);
+}
+
 function empresaGravaIva($cod_empresa) {
     $query = "SELECT * FROM tb_empresas WHERE cod_empresa = $cod_empresa";
     $resp = Conexion::buscarRegistro($query);

@@ -627,19 +627,27 @@ class cl_ordenes
 	    return Conexion::ejecutar($query,NULL);
 	}
 
-	public function saveOrdenInventario($cod_orden, $cod_contifico_empresa, $tipo, $codigo, $id) {
+	public function saveOrdenInventario($cod_orden, $cod_contifico_empresa, $tipo, $codigo, $id, $payload) {
 		$fecha = fecha();
 		$query = "INSERT INTO tb_orden_inventario
-					SET 
+					SET
 					cod_contifico_empresa = $cod_contifico_empresa,
 					cod_orden = $cod_orden,
 					tipo = '$tipo',
 					codigo = '$codigo',
 					id = '$id',
+					payload = :payload,
 					fecha = '$fecha'";
-		return Conexion::ejecutar($query, null);
+		return Conexion::ejecutar($query, [':payload' => $payload]);
 	}
 	
+	public function getInventarioOrden($cod_orden, $tipo) {
+		$query = "SELECT * FROM tb_orden_inventario
+					WHERE cod_orden = $cod_orden AND tipo = '$tipo'
+					ORDER BY cod_orden_inventario DESC LIMIT 1";
+		return Conexion::buscarRegistro($query);
+	}
+
 	//Recipientes
 	public function getRecipientes($cod_orden, $cod_empresa){
 	    $query = "SELECT r.cod_recipiente, r.nombre, ore.cantidad 
