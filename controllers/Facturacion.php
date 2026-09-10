@@ -187,11 +187,15 @@ function verInventario(): array {
         $tipoBuscado = $estado === 'DEBITADO' ? 'EGR' : 'ING';
         $movimiento = $ClOrdenes->getInventarioOrden($id, $tipoBuscado);
         if (!$movimiento) return ['success' => 0, 'mensaje' => 'No se encontró el movimiento guardado'];
+        $inventarioPayload = json_decode($movimiento['payload'], true);
         return [
-            'success'    => 1,
-            'origen'     => 'HISTORICO',
-            'inventario' => json_decode($movimiento['payload'], true),
-            'fecha'      => $movimiento['fecha'],
+            'success'      => 1,
+            'origen'       => 'HISTORICO',
+            'inventario'   => $inventarioPayload,
+            'fecha'        => $movimiento['fecha'],
+            'id_contifico' => $movimiento['id'],
+            'codigo'       => $movimiento['codigo'],
+            'descripcion'  => $inventarioPayload['descripcion'] ?? null,
         ];
     }
 

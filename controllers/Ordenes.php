@@ -99,6 +99,8 @@ else if($method == "POST"){
 			showResponse(setEstado($input));
 		}else if($metodo == "cancelar"){
 			showResponse(cancelarOrden($input));
+		}else if($metodo == "notificar-cliente"){
+			showResponse(notificarClienteManual($input));
 		}else if($metodo == "cancelar-courier"){
 			showResponse(cancelarAsignacion($input));
 		}else if($metodo == "revertir-pago"){
@@ -1004,6 +1006,45 @@ function cancelarOrden($input){ //TODO: Terminar Cancelar Orden
 		$return['mensaje'] = "No se pudo cambiar de estado la orden a ".$MinusEstado;
 	}
 	$return['orden'] = $orden;
+	return $return;
+}
+
+// Notificación manual desde el dashboard (botón "Notificar pedido listo" / modal "Notificar al cliente").
+// Siempre viaja atada a una orden: por eso el type es fijo "order_tracking" y navega al tracking.
+function notificarClienteManual($input){
+	global $Clordenes;
+
+	$errorMsg = "";
+	$datosObligatorios = array("cod_orden", "titulo", "mensaje");
+	if(!validate($datosObligatorios, $input, $errorMsg)){
+		$return['success'] = 0;
+		$return['mensaje'] = $errorMsg;
+		return $return;
+	}
+	extract($input);
+
+	$orden = $Clordenes->getOrden($cod_orden);
+	if(!$orden){
+		$return['success'] = 0;
+		$return['mensaje'] = "No existe la orden $cod_orden";
+		return $return;
+	}
+
+	$tokens = getPushTokensCliente($orden['cod_usuario']);
+	if(empty($tokens)){
+		$return['success'] = 0;
+		$return['mensaje'] = "El cliente no tiene notificaciones push registradas";
+		return $return;
+	}
+
+	enviarExpoPush($tokens, $titulo, $mensaje, [
+		"orden_id" => generarTracking($cod_orden),
+		"estado"   => $orden['estado'],
+		"type"     => "order_tracking",
+	]);
+
+	$return['success'] = 1;
+	$return['mensaje'] = "Notificación enviada";
 	return $return;
 }
 

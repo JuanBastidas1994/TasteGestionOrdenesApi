@@ -294,13 +294,23 @@ class ContificoProvider implements BillingProviderInterface {
             return ['success' => 1, 'mensaje' => "No hay nada que $msj de inventario", 'skipped' => true];
         }
 
+        // Usamos el número de factura real (ya guardado en tb_orden_factura_electronica para
+        // este punto del flujo, ver saveOrdenFactura() en Facturacion.php) para que la descripcion
+        // sea identificable en Contifico sin tener que cruzar con nuestra BD.
+        $factura = getUltimaFacturaOrden($cod_orden);
+        $refFactura = $factura['num_factura'] ?? "orden $cod_orden";
+
+        $descripcion = $tipo == "ING"
+            ? "Ingreso de inventario por reversión (anulación) de la factura #$refFactura"
+            : "Egreso de inventario por compra web - Factura #$refFactura";
+
         $inventario = [
-            "codigo"      => "TASTE" . $cod_orden, // Solo trazabilidad: Contifico no lo usa para deduplicar.
+            "codigo"      => "TASTE" . $cod_orden, // Máximo 16 caracteres según Contifico. Solo trazabilidad, no lo usan para deduplicar.
             "tipo"        => $tipo,
             "fecha"       => date_format(date_create(fecha_only()), 'd/m/Y'),
             "bodega_id"   => $contificoSucursal["id_bodega"],
             "detalles"    => $detalles,
-            "descripcion" => "Compra mediante la WEB",
+            "descripcion" => $descripcion,
         ];
 
         return ['success' => 1, 'inventario' => $inventario];
