@@ -27,5 +27,9 @@ function procesarLogicaSimple(array $orden, array $config, cl_clientes $cliente)
         $cliente->AddDinero(1.00, $cliente->cod_cliente, 3, $diasDinero, $cod_orden);
     }
 
+    // Solo historial: 1 punto por cada $1 comprado. cod_nivel = -1 marca la fila como
+    // del esquema simple para que GetPuntos() la ignore y no afecte niveles
+    $cliente->AddPuntos($cliente->cod_cliente, -1, intval($monto), $metasCumplidas * 1.00, $diasSaldo, $cod_orden);
+
     return (bool)$cliente->ActualizarSaldo($cliente->cod_cliente, $nuevoSaldo, $saldoActual, $diasSaldo, $cod_orden);
 }
