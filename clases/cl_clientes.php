@@ -58,6 +58,7 @@ class cl_clientes
                     WHERE cp.cod_cliente = $this->cod_cliente
                     AND cp.estado = 'A'
                     AND cp.fecha_caducidad > NOW()
+                    AND IFNULL(cp.cod_nivel, 0) >= 0
                     GROUP BY cp.cod_cliente";
 			$resp = Conexion::buscarRegistro($query);
 			return ($resp) ? $resp['puntos'] : 0;
