@@ -4,6 +4,7 @@
 *.log
 *.txt
 .env
+.env.*
+!.env.example
 .config
 *error_log
-config.php
