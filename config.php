@@ -10,9 +10,12 @@ define('contrasena', env('DB_PASSWORD', ''));
 define('api_version', env('API_VERSION', 'v1'));
 define('url_sistema', env('URL_SISTEMA', 'https://tastedashboard.test/'));
 define('url_upload', env('URL_UPLOAD', ''));
+define('url_business_assets', env('URL_BUSINESS_ASSETS', url_sistema . 'assets/empresas/'));
 define('url_api', env('URL_API', 'https://tasteordenes.test/'));
 define('url_api_motorizados', env('URL_API_MOTORIZADOS', ''));
 define('ENVIRONMENT', env('APP_ENV', 'development'));
+// Mismo valor que TRACKING_SECRET del dashboard (taste): firma los links de tracking
+define('TRACKING_SECRET', env('TRACKING_SECRET', ''));
 
 define('host', env('MAIL_HOST', '127.0.0.1'));
 define('SMTPAuth', env('MAIL_AUTH', false));

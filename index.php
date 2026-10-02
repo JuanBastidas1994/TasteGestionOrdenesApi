@@ -53,6 +53,8 @@ if(verificateWs($empresa))
 	define('name_site',$empresa['nombre']);
 	define('url_web',$empresa['url_web']);
 	define('api_key',$empresa['api_key']);
+	define('iva',$empresa['impuesto']);
+	define('sucursaldefault',getFirstSucursal());
 	if($empresa['fidelizacion'] == 1)
 		define('fidelizacion',true);
 	else	

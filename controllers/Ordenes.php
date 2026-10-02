@@ -560,8 +560,6 @@ function asignarFlota($input){
     	}
 	}    
 	    
-	require_once "helpers/notificationUser.php";
-	notifyAsignacionFlota($cod_orden, $cod_flota, $texto_adicional);
 
 
 	//NOTIFICAR AL CLIENTE (push Expo, no Firebase)
@@ -861,6 +859,13 @@ function setEstado($input){
 	if($orden['is_envio']==0 && $estado=="ENVIANDO"){
 		$return['success'] = 0;
 		$return['mensaje'] = "Las órdenes Pickup no pueden ser cambiadas a estado ENVIANDO por favor revisar";
+		return $return;
+	}
+	// Una Pickup debe aceptarse/prepararse antes de entregarse: saltarse ese paso deja al cliente
+	// sin tracking ni notificaciones, y a los sistemas POS (Runfood) sin comanda en cocina.
+	if($orden['is_envio']==0 && $estado=="ENTREGADA" && $orden['estado']=="ENTRANTE"){
+		$return['success'] = 0;
+		$return['mensaje'] = "Las órdenes Pickup no pueden pasar de ENTRANTE a ENTREGADA directamente, primero deben aceptarse";
 		return $return;
 	}
 	if($orden['is_envio']==1 && $estado=="PREPARANDO"){

@@ -6,6 +6,10 @@ class cl_runfood
     public $apiKey = "";
     public $msgError = "";
 	public $cod_empresa;
+    /** HTTP code de la última llamada a la API nueva (0 si falló la conexión). */
+    public $lastHttpCode = 0;
+    /** Cuerpo decodificado de la última respuesta, también cuando es un error (400/409/422). */
+    public $lastResponse = null;
 
     public function __construct(){
         $this->cod_empresa = cod_empresa;
@@ -98,63 +102,75 @@ class cl_runfood
         }
 	}
 
-    /** Nueva API de Runfood: POST /orders, auth por header X-Api-Key (no más wrapping de tablet/usuario). */
-    public function createOrder($data){
-        $ch = curl_init($this->URL . "/orders");
-        $headers = [
+    /**
+     * Llamada genérica a la API nueva de Runfood (auth por header X-Api-Key).
+     * Retorna el body decodificado si el HTTP es 2xx; false en otro caso (ver msgError,
+     * lastHttpCode y lastResponse). Ojo: NO usar JSON_NUMERIC_CHECK — convierte SKUs como
+     * "012312312" en números y pierden el cero inicial.
+     */
+    private function request($method, $path, $data = null){
+        $ch = curl_init($this->URL . $path);
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Content-Type: application/json',
             'X-Api-Key: ' . $this->apiKey,
-        ];
-
-        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data, JSON_NUMERIC_CHECK));
-        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+        ]);
+        if ($data !== null) {
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION));
+        }
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
         $response = curl_exec($ch);
 
-        $info = curl_getinfo($ch);
-        if ($info['http_code'] == 409) {
-            // external_id ya existe: Runfood devuelve el id del pedido existente en vez de duplicar
-            curl_close($ch);
-            return json_decode($response, true);
-        }
+        $this->lastHttpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $this->lastResponse = ($response !== false && $response !== "") ? json_decode($response, true) : null;
 
-        $msg = "";
-        if ($this->curlErrors($ch, $response, $msg)) {
-            curl_close($ch);
-            return json_decode($response, true);
-        } else {
-            $this->msgError = $msg;
+        if ($response === false) {
+            $this->msgError = "Curl error: " . curl_error($ch);
             curl_close($ch);
             return false;
         }
+        curl_close($ch);
+
+        if (intval($this->lastHttpCode / 100) === 2) {
+            return $this->lastResponse ?? ['success' => true];
+        }
+
+        // Runfood responde {"error": "codigo", "message": "detalle"}
+        $this->msgError = "Error " . $this->lastHttpCode;
+        if (is_array($this->lastResponse)) {
+            $error = $this->lastResponse['error'] ?? '';
+            $message = $this->lastResponse['message'] ?? '';
+            $detalle = trim("$error: $message", " :");
+            if ($detalle !== '') $this->msgError .= " - $detalle";
+        }
+        return false;
     }
 
-    /** Nueva API de Runfood: DELETE /orders/{id}. Solo funciona mientras la orden esté en estado 'open'. */
+    /**
+     * POST /orders. En 409 (external_id repetido) retorna false, pero lastResponse trae
+     * el id y status del pedido que ya existía: {"error":"duplicate_order","id":..,"status":..}
+     */
+    public function createOrder($data){
+        return $this->request("POST", "/orders", $data);
+    }
+
+    public function getOrder($id){
+        return $this->request("GET", "/orders/$id");
+    }
+
+    /** POST /orders/{id}/tabs/{tabId}/invoice — factura una cuenta completa de un pedido abierto. */
+    public function invoiceTab($orderId, $tabId, $data){
+        return $this->request("POST", "/orders/$orderId/tabs/$tabId/invoice", $data);
+    }
+
+    public function getOrderInvoices($orderId){
+        return $this->request("GET", "/orders/$orderId/invoices");
+    }
+
+    /** DELETE /orders/{id}. Solo funciona mientras el pedido esté abierto (sin facturar). */
     public function cancelOrder($id, $motivo = null){
-        $ch = curl_init($this->URL . "/orders/$id");
-        $headers = [
-            'Content-Type: application/json',
-            'X-Api-Key: ' . $this->apiKey,
-        ];
-
-        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "DELETE");
-        if ($motivo) {
-            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(["reason" => $motivo]));
-        }
-        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        $response = curl_exec($ch);
-
-        $msg = "";
-        if ($this->curlErrors($ch, $response, $msg)) {
-            curl_close($ch);
-            return $response === "" ? ['success' => true] : json_decode($response, true);
-        } else {
-            $this->msgError = $msg;
-            curl_close($ch);
-            return false;
-        }
+        return $this->request("DELETE", "/orders/$id", $motivo ? ["reason" => $motivo] : null);
     }
 
     /** @deprecated API previa de Runfood (PEDIDO/INSERT con wrapping tablet/usuario). */
