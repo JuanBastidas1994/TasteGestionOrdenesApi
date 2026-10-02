@@ -96,26 +96,8 @@ function getTextoClientePush($estado, $is_envio){
 	];
 }
 
-/**
- * Recordatorio de calificación, disparado por cron/recordatorio_calificacion.php 30 minutos
- * después de ENTREGADA — no es una transición de estado real, por eso vive aparte de
- * getTextoClientePush()/notificarClientePush(). Reusa el mismo type/orden_id "order_tracking"
- * que el resto: el tracking de un pedido ENTREGADA ya muestra el componente de calificación
- * (ver TasteAppExpo RateUs.jsx / ClosedOrderView.jsx), así que no hace falta una ruta nueva.
- */
-function notificarRecordatorioCalificacion($orden){
-	$cod_usuario = $orden['cod_usuario'];
-	$cod_orden   = $orden['cod_orden'];
-
-	$tokens = getPushTokensCliente($cod_usuario);
-	if(empty($tokens)) return false;
-
-	return enviarExpoPush($tokens, "¿Qué tal estuvo todo? ⭐", "Cuéntanos cómo fue tu experiencia con este pedido", [
-		"orden_id" => generarTracking($cod_orden),
-		"estado"   => "ENTREGADA",
-		"type"     => "order_tracking",
-	]);
-}
+// El recordatorio de calificación (30 min después de ENTREGADA) ahora lo envía el cron único
+// de notificaciones: taste/cron/notificaciones_push.php
 
 // Tokens Expo del usuario (puede tener varios dispositivos)
 function getPushTokensCliente($cod_usuario){

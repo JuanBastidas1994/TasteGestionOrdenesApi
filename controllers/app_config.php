@@ -29,10 +29,6 @@ $Clcategorias = new cl_categorias();
 				$return = lstBanners();
 				showResponse($return);
 			}
-			if($first=="menu-digital"){
-			   $return = menuDigital(); 
-			   showResponse($return);
-			}
 		}
 		if($num_variables == 3){
 			$first = $request[1];
@@ -49,10 +45,6 @@ $Clcategorias = new cl_categorias();
 			if($first=="pagina"){ //PAGINA INDICAR ALIAS
 			    $aliasPagina = $request[2];
 				$return = infoPagina($aliasPagina);
-				showResponse($return);
-			}
-			if($first=="anuncios-web"){
-				$return = anuncioWebDetalle($request[2]);
 				showResponse($return);
 			}
 		}
@@ -131,46 +123,6 @@ function infoHome($cod_sucursal = 0, $cod_usuario=0){
         }		
 	}    
 	
-	//OTRAS OPCIONES
-	$tipoEsquema = (isset($_GET['tipo'])) ? $_GET['tipo'] : 'APP';
-
-	$query = "SELECT titulo, forma, tipo, num_columnas, detalle, cod_detalle
-	        FROM tb_web_esquema WHERE cod_empresa = ".cod_empresa." AND plataforma = '$tipoEsquema' ORDER BY posicion ASC";
-	$resp = Conexion::buscarVariosRegistro($query);
-	foreach ($resp as $secciones) {
-	    $data[$x] = $secciones;
-	    
-		$tipo = $secciones['tipo'];
-		$cod = $secciones['cod_detalle'];
-		
-		if($tipo == "ordenar"){
-		    $data[$x]['items'] = $Clproductos->listaModuloWeb($cod, $cod_sucursal);
-		    $data[$x]['width'] = 300;
-		    $data[$x]['height'] = 300;
-		}
-		else if($tipo == "anuncios"){
-		    $query = "SELECT width, height FROM tb_anuncio_cabecera WHERE cod_anuncio_cabecera = $cod";
-		    $ac = Conexion::buscarRegistro($query);
-		    if($ac){
-		        $data[$x]['width'] = $ac['width'];
-		        $data[$x]['height'] = $ac['height'];
-				$data[$x]['id'] = $cod;
-		    }
-		    
-		    
-		    $query = "SELECT titulo, subtitulo, imagen as image_min, text_boton, accion_id, url_boton as accion_desc FROM tb_anuncio_detalle WHERE cod_anuncio_cabecera = $cod ORDER BY posicion";
-		    $resp = Conexion::buscarVariosRegistro($query);
-		    $j=0;
-		    foreach ($resp as $anuncio) {
-            	$resp[$j]['image_min'] = url.$anuncio['image_min'];
-            	$j++;
-            }
-		    
-			$data[$x]['items'] = $resp;
-		}
-		$x++;
-	}
-
 
 	/*MODALES*/
 	$modales = [];
@@ -186,18 +138,6 @@ function infoHome($cod_sucursal = 0, $cod_usuario=0){
 			$modal['accion_desc'] = '';
 			$modales[0] = $modal;
 		}
-	}
-
-	$fecha = fecha();
-	$query = "SELECT m.imagen, m.accion_id, m.accion_desc
-				FROM tb_modal_eventos m
-				WHERE m.fecha_inicio <= '$fecha'
-				AND m.fecha_fin >= '$fecha'
-				AND m.cod_empresa = ".cod_empresa." LIMIT 0,3";
-	$pmodal = Conexion::buscarVariosRegistro($query);
-	foreach ($pmodal as $modal) {
-		$modal['imagen'] = url.$modal['imagen'];
-		$modales[] = $modal;
 	}
 
 	$return['success'] = 1;
@@ -276,25 +216,6 @@ function infoHome2($cod_sucursal = 0, $cod_usuario=0){
 		    $data[$x]['width'] = 300;
 		    $data[$x]['height'] = 300;
 		}
-		if($tipo == "anuncios"){
-		    $query = "SELECT width, height FROM tb_anuncio_cabecera WHERE cod_anuncio_cabecera = $cod";
-		    $ac = Conexion::buscarRegistro($query);
-		    if($ac){
-		        $data[$x]['width'] = $ac['width'];
-		        $data[$x]['height'] = $ac['height'];
-				//$data[$x]['id'] = $cod;
-		    }
-		    
-		    $query = "SELECT titulo, subtitulo, imagen as image_min, text_boton, accion_id, url_boton as accion_desc FROM tb_anuncio_detalle WHERE cod_anuncio_cabecera = $cod ORDER BY posicion";
-		    $resp = Conexion::buscarVariosRegistro($query);
-		    $j=0;
-		    foreach ($resp as $anuncio) {
-            	$resp[$j]['image_min'] = url.$anuncio['image_min'];
-            	$j++;
-            }
-		    
-			$data[$x]['items'] = $resp;
-		}
 		if($tipo == "categorias"){
 		    $data[$x]['items'] = $Clcategorias->lista();
 		}
@@ -324,18 +245,6 @@ function infoHome2($cod_sucursal = 0, $cod_usuario=0){
 			$modal['accion_desc'] = '';
 			$modales[0] = $modal;
 		}
-	}
-
-	$fecha = fecha();
-	$query = "SELECT m.imagen, m.accion_id, m.accion_desc
-				FROM tb_modal_eventos m
-				WHERE m.fecha_inicio <= '$fecha'
-				AND m.fecha_fin >= '$fecha'
-				AND m.cod_empresa = ".cod_empresa." LIMIT 0,3";
-	$pmodal = Conexion::buscarVariosRegistro($query);
-	foreach ($pmodal as $modal) {
-		$modal['imagen'] = url.$modal['imagen'];
-		$modales[] = $modal;
 	}
 
 	$return['success'] = 1;
@@ -374,25 +283,6 @@ function infoPagina($alias="", $cod_sucursal=0){
 		    $data[$x]['items'] = $Clproductos->listaModuloWeb($cod, $cod_sucursal);
 		    $data[$x]['width'] = 300;
 		    $data[$x]['height'] = 300;
-		}
-		if($tipo == "anuncios"){
-		    $query = "SELECT width, height FROM tb_anuncio_cabecera WHERE cod_anuncio_cabecera = $cod";
-		    $ac = Conexion::buscarRegistro($query);
-		    if($ac){
-		        $data[$x]['width'] = $ac['width'];
-		        $data[$x]['height'] = $ac['height'];
-				//$data[$x]['id'] = $cod;
-		    }
-		    
-		    $query = "SELECT titulo, subtitulo, imagen as image_min, text_boton, accion_id, url_boton as accion_desc FROM tb_anuncio_detalle WHERE cod_anuncio_cabecera = $cod ORDER BY posicion";
-		    $resp = Conexion::buscarVariosRegistro($query);
-		    $j=0;
-		    foreach ($resp as $anuncio) {
-            	$resp[$j]['image_min'] = url.$anuncio['image_min'];
-            	$j++;
-            }
-		    
-			$data[$x]['items'] = $resp;
 		}
 		if($tipo == "categorias"){
 		    $data[$x]['items'] = $Clcategorias->lista();
@@ -442,57 +332,6 @@ function lstBanners(){
 	return $return; 
 }
 
-
-function menuDigital(){
-	$cod_empresa = cod_empresa;
-	$query = "SELECT mi.imagen
-                FROM tb_menu_digital m, tb_menu_digital_imagenes mi
-                WHERE m.cod_menu_digital = mi.cod_menu_digital
-                AND m.cod_empresa = $cod_empresa
-                AND mi.estado = 'A'
-                ORDER BY mi.posicion";
-	$resp = Conexion::buscarVariosRegistro($query);
-	foreach ($resp as $key => $anuncio) {
-		$resp[$key]['imagen'] = url.$anuncio['imagen'];
-		$info = getimagesize(urlUpload.$anuncio['imagen']);
-		if($info){
-		    $resp[$key]['ancho'] = $info[0];
-		    $resp[$key]['alto'] = $info[1];
-		}
-		
-	}
-	$return['success'] = 1;
-	$return['mensaje'] = "Lista imágenes menu digital";
-	$return['data'] = $resp;
-	return $return;
-}
-
-function anuncioWebDetalle($id){
-	$categoriasGenerales = [];
-	$cod_empresa = cod_empresa;
-	
-	$limit = (isset($_GET['limit'])) ? $_GET['limit'] : 999;
-	$query = "SELECT titulo, subtitulo, imagen as image_min, text_boton, accion_id, url_boton as accion_desc, categorias, descripcion 
-				FROM tb_anuncio_detalle WHERE cod_anuncio_cabecera = $id AND cod_empresa = $cod_empresa AND estado = 'A' ORDER BY posicion LIMIT 0,$limit";
-	$resp = Conexion::buscarVariosRegistro($query);
-	foreach ($resp as $key => $anuncio) {
-		$categorias = $anuncio['categorias'];
-		unset($resp[$key]['categorias']);
-
-		$resp[$key]['image_min'] = url.$anuncio['image_min'];
-		if($categorias !== ""){
-			$resp[$key]['categorias'] = explode(",",$categorias);
-			fillArrayItemsNoRepeat($categoriasGenerales, $resp[$key]['categorias']);
-		}
-		else
-			$resp[$key]['categorias'] = [];
-	}
-	$return['success'] = 1;
-	$return['mensaje'] = "Lista Anuncio web";
-	$return['categorias'] = $categoriasGenerales;
-	$return['data'] = $resp;
-	return $return;
-}
 
 function fillArrayItemsNoRepeat(&$fill, $newArray){
 	foreach($newArray as $key => $item){

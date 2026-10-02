@@ -8,6 +8,8 @@ if ($method == "POST") {
     if ($num_variables == 2) {
         if ($request[1] == "electronica")                    showResponse(facturar());
         if ($request[1] == "anular")                         showResponse(anular());
+        if ($request[1] == "comanda")                        showResponse(enviarComanda());
+        if ($request[1] == "anular-comanda")                 showResponse(anularComanda());
         if ($request[1] == "incrementar-secuencial")         showResponse(incrementarSecuencial());
         if ($request[1] == "reintentar-inventario")          showResponse(reintentarInventario());
         if ($request[1] == "reintentar-reversion-inventario") showResponse(reintentarReversionInventario());
@@ -44,7 +46,11 @@ function facturar(): array {
 
     $msgError = "";
     $schema = $provider->buildSchema($id, $infoFacturacion, $msgError);
-    if (!$schema) return ['success' => 0, 'mensaje' => $msgError, 'detail' => 'Error en buildSchema'];
+    if (!$schema) {
+        // Ej. producto o forma de pago sin ligar: se guarda para que se vea en Reenvío de facturas.
+        $provider->saveError($id, $msgError);
+        return ['success' => 0, 'mensaje' => $msgError, 'detail' => 'Error en buildSchema'];
+    }
 
     $result = $provider->sendInvoice($id, $schema, $infoFacturacion);
     if ($result['success']) {
@@ -61,6 +67,60 @@ function facturar(): array {
         saveEstadoInventario($id, mapEstadoInventarioEgreso($result['inventario']));
     }
     return $result;
+}
+
+/**
+ * Abre el pedido en el proveedor cuando éste también es POS/cocina (Runfood): imprime la comanda
+ * al salir la orden de ENTRANTE, y se factura después al entregar (facturar()).
+ * Para proveedores solo de facturación (Contifico) no aplica y responde success -1.
+ */
+function enviarComanda(): array {
+    global $input;
+
+    if (!isset($input['id'])) return ['success' => 0, 'mensaje' => 'Campo id es obligatorio'];
+    $id = $input['id'];
+
+    $ClOrdenes = new cl_ordenes();
+    $orden = $ClOrdenes->getOrden($id);
+    if (!$orden) return ['success' => 0, 'mensaje' => 'La orden no existe'];
+    if (in_array($orden['estado'], ['ENTRANTE', 'ANULADA'])) {
+        return ['success' => 0, 'mensaje' => "La orden está {$orden['estado']}, no se envía comanda"];
+    }
+
+    $provider = BillingProviderFactory::makeForEmpresa(cod_empresa);
+    if (!($provider instanceof ComandaProviderInterface)) {
+        return ['success' => -1, 'mensaje' => 'El sistema de facturación de la empresa no maneja comandas'];
+    }
+
+    $infoFacturacion = $provider->getInfoSucursal($orden["cod_sucursal"]);
+    if (!$infoFacturacion) return ['success' => 0, 'mensaje' => 'La sucursal no tiene configurado un pto de emisión'];
+    if ((int)$infoFacturacion["facturar"] == 0) return ['success' => -1, 'mensaje' => 'La opción de facturar no está habilitada'];
+
+    return $provider->sendComanda($id, $infoFacturacion);
+}
+
+/** Anula la comanda abierta (aún sin facturar) de una orden ya anulada localmente. */
+function anularComanda(): array {
+    global $input;
+
+    if (!isset($input['id'])) return ['success' => 0, 'mensaje' => 'Campo id es obligatorio'];
+    $id = $input['id'];
+
+    $provider = BillingProviderFactory::makeForEmpresa(cod_empresa);
+    if (!($provider instanceof ComandaProviderInterface)) {
+        return ['success' => -1, 'mensaje' => 'El sistema de facturación de la empresa no maneja comandas'];
+    }
+
+    $comanda = getComandaOrden($id);
+    if (!$comanda) return ['success' => -1, 'mensaje' => "La orden $id no tiene comanda enviada"];
+
+    $msgError = "";
+    if (!$provider->canVoid($id, $msgError)) return ['success' => 0, 'mensaje' => $msgError];
+
+    $infoFacturacion = $provider->getInfoSucursal($comanda["cod_proveedor"]);
+    if (!$infoFacturacion) return ['success' => 0, 'mensaje' => 'La sucursal no tiene configurado un pto de emisión'];
+
+    return $provider->cancelComanda($id, $comanda, $infoFacturacion);
 }
 
 /**

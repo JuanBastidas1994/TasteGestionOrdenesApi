@@ -334,15 +334,8 @@ class cl_contifico
 	}
 
 	public function saveErrorFactura($cod_orden, $motivo){
-		$fecha = fecha();
-		$query = "INSERT INTO tb_orden_errores
-					SET
-						cod_orden = $cod_orden,
-						tipo = 'FACTURA',
-						proveedor = 'CONTIFICO',
-						motivo = '$motivo',
-						fecha = '$fecha'";
-		return Conexion::ejecutar($query, null);
+		require_once "helpers/billing_helpers.php";
+		return saveErrorFacturacion($cod_orden, 'CONTIFICO', $motivo);
 	}
 
 	public function sendToSRI($id) {

@@ -85,7 +85,7 @@ class cl_productos
      * factura de una opción tipo-producto (ya ligada a Contífico vía tb_productos_facturacion).
      */
     public function getFacturacionProductoOpcion($cod_producto_opciones_detalle, $cod_contifico_empresa) {
-        $query = "SELECT p.cod_producto, p.nombre, p.cobra_iva, pf.id
+        $query = "SELECT p.cod_producto, p.nombre, p.cobra_iva, pf.id, pf.sku
                 FROM tb_productos_opciones_detalle pd
                 INNER JOIN tb_productos_opciones pc ON pd.cod_producto_opcion = pc.cod_producto_opcion AND pc.isDatabase = 1
                 INNER JOIN tb_productos p ON p.cod_producto = pd.item AND p.estado IN ('A', 'I')
@@ -94,6 +94,20 @@ class cl_productos
         return Conexion::buscarRegistro($query);
     }
 
+
+    /**
+     * true si la opción pertenece a un grupo de opciones tipo producto (isDatabase=1). Esas opciones
+     * se facturan con el mapeo del propio producto (tb_productos_facturacion), nunca con un mapeo
+     * por opción (tb_productos_opciones_detalle_facturacion), que es solo para opciones abiertas.
+     */
+    public function esOpcionTipoProducto($cod_producto_opciones_detalle) {
+        $query = "SELECT pc.isDatabase
+                FROM tb_productos_opciones_detalle pd
+                INNER JOIN tb_productos_opciones pc ON pd.cod_producto_opcion = pc.cod_producto_opcion
+                WHERE pd.cod_producto_opciones_detalle = $cod_producto_opciones_detalle";
+        $resp = Conexion::buscarRegistro($query);
+        return $resp && (int)$resp['isDatabase'] === 1;
+    }
 
     public function getOpcionesFullData($cod_product){
         $query = "SELECT * FROM tb_productos_opciones WHERE cod_producto = $cod_product ORDER BY posicion ASC";

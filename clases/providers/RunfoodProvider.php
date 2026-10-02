@@ -1,11 +1,35 @@
 <?php
 require_once __DIR__ . "/BillingProviderInterface.php";
+require_once __DIR__ . "/ComandaProviderInterface.php";
 require_once "clases/cl_runfood.php";
 require_once "helpers/billing_helpers.php";
 
-class RunfoodProvider implements BillingProviderInterface {
+/**
+ * Runfood es facturación Y POS/cocina, por eso el pedido vive en dos momentos:
+ *  1. La orden sale de ENTRANTE → sendComanda: pedido abierto (status open) que imprime la comanda.
+ *  2. La orden se ENTREGA → sendInvoice: factura la cuenta de esa comanda.
+ *     Si no hubo comanda (no se pudo enviar, o nunca pasó por otro estado), se crea el pedido
+ *     ya cerrado (status closed): comanda + factura en una sola llamada.
+ *  3. La orden se ANULA antes de facturar → cancelComanda (DELETE). Un pedido facturado no se
+ *     anula por API: requiere nota de crédito desde el POS de Runfood.
+ *
+ * Montos: unit_price va SIN IVA; RunFood suma el IVA según su catálogo (vat_applicable) y la tasa
+ * del local, y compara su total con el nuestro (±0.01). Se envían los netos que Taste ya guardó con
+ * 2 decimales (precio_no_tax, subtotal_*, adicional_no_tax_total, envio_iva) para que el cálculo de
+ * RunFood reproduzca exactamente el total que pagó el cliente.
+ */
+class RunfoodProvider implements BillingProviderInterface, ComandaProviderInterface {
 
     const CODIGO_SISTEMA = 3;
+    /** Runfood acepta hasta 20 modifiers por item. */
+    const MAX_MODIFIERS = 20;
+    /**
+     * Runfood (v18.0.9) falla al facturar una cuenta ABIERTA que tiene modifiers
+     * ("El producto que está disminuyendo ... debe tener un motivo"), aunque el pedido closed
+     * sí los acepta. Hasta que lo corrijan, las opciones sin costo e ingredientes viajan como
+     * líneas a $0. Poner en true cuando Runfood lo arregle.
+     */
+    const USAR_MODIFIERS = false;
 
     private $client;
 
@@ -22,43 +46,98 @@ class RunfoodProvider implements BillingProviderInterface {
     }
 
     public function buildSchema(int $cod_orden, array $infoFacturacion, string &$mensaje) {
-        ini_set('serialize_precision', 4);
-        return $this->armarSchema($cod_orden, $infoFacturacion, $mensaje);
+        return $this->armarSchema($cod_orden, $infoFacturacion, $mensaje, 'closed');
     }
 
     public function sendInvoice(int $cod_orden, array $schema, array $infoFacturacion): array {
-        mylogFile("runfood", json_encode($schema, JSON_NUMERIC_CHECK), "ORDER_REQUEST");
-
-        $invoice = $this->client->createOrder($schema);
-        if (!$invoice) {
-            return ['success' => 0, 'mensaje' => 'No se pudo enviar la orden a Runfood ' . $this->client->msgError];
+        $result = $this->enviarFactura($cod_orden, $schema, $infoFacturacion);
+        if (!$result['success']) {
+            $this->saveError($cod_orden, $result['mensaje']);
         }
-        if (!isset($invoice['id'])) {
-            return ['success' => 0, 'mensaje' => 'Runfood no respondio con un ID valido de Orden'];
+        return $result;
+    }
+
+    private function enviarFactura(int $cod_orden, array $schema, array $infoFacturacion): array {
+        mylogFile("runfood", json_encode($schema), "ORDER_REQUEST");
+
+        $comanda = getComandaOrden($cod_orden);
+        if ($comanda && $comanda['estado'] === 'ABIERTA') {
+            return $this->facturarComanda($comanda, $schema, $infoFacturacion);
         }
 
+        // Sin comanda abierta: venta directa (pedido + factura en una sola llamada).
+        $pedido = $this->client->createOrder($schema);
+        if (!$pedido && $this->client->lastHttpCode == 409) {
+            return $this->facturarPedidoExistente($cod_orden, $schema, $infoFacturacion);
+        }
+        if (!$pedido) {
+            return ['success' => 0, 'mensaje' => 'No se pudo facturar la orden en Runfood. ' . $this->client->msgError];
+        }
+
+        saveComandaOrden($cod_orden, self::CODIGO_SISTEMA, $infoFacturacion['cod_sucursal'], $pedido['id'], $pedido['tabs'][0]['id'] ?? null, $pedido['order_number'] ?? '', 'FACTURADA');
+        return $this->resultadoFactura($pedido['id'], $pedido['invoices'][0] ?? null, $infoFacturacion, $pedido);
+    }
+
+    public function sendComanda(int $cod_orden, array $infoFacturacion): array {
+        $comanda = getComandaOrden($cod_orden);
+        if ($comanda) {
+            return ['success' => 1, 'mensaje' => "La comanda ya fue enviada a Runfood (estado {$comanda['estado']})", 'skipped' => true];
+        }
+        if (ExistFacturaToOrden($cod_orden)) {
+            return ['success' => 1, 'mensaje' => 'La orden ya está facturada, no se envía comanda', 'skipped' => true];
+        }
+
+        $mensaje = "";
+        $schema = $this->armarSchema($cod_orden, $infoFacturacion, $mensaje, 'open');
+        if (!$schema) {
+            return ['success' => 0, 'mensaje' => $mensaje];
+        }
+        mylogFile("runfood", json_encode($schema), "COMANDA_REQUEST");
+
+        $pedido = $this->client->createOrder($schema);
+        if (!$pedido && $this->client->lastHttpCode == 409) {
+            // Ya existía en Runfood (ej. se perdió la respuesta del primer envío): se adopta si sigue abierto.
+            $pedido = $this->client->getOrder($this->client->lastResponse['id'] ?? 0);
+            if (!$pedido || $pedido['status'] !== 'open') {
+                return ['success' => 0, 'mensaje' => 'La orden ya existe en Runfood y no está abierta (' . ($pedido['status'] ?? $this->client->msgError) . ')'];
+            }
+        }
+        if (!$pedido) {
+            return ['success' => 0, 'mensaje' => 'No se pudo enviar la comanda a Runfood. ' . $this->client->msgError];
+        }
+
+        saveComandaOrden($cod_orden, self::CODIGO_SISTEMA, $infoFacturacion['cod_sucursal'], $pedido['id'], $pedido['tabs'][0]['id'] ?? null, $pedido['order_number'] ?? '', 'ABIERTA');
         return [
-            'success'         => 1,
-            'mensaje'         => 'Orden Enviada a Runfood correctamente',
-            'external_id'     => $invoice['id'],
-            'document_number' => $invoice['order_number'] ?? $invoice['id'],
-            'estado'          => 'CREADA',
-            'cod_proveedor'   => $infoFacturacion['cod_sucursal'],
-            'tipo_documento'  => $infoFacturacion['tipo_documento'],
-            'data'            => $invoice,
+            'success' => 1,
+            'mensaje' => 'Comanda enviada a Runfood (pedido #' . ($pedido['order_number'] ?? $pedido['id']) . ')',
+            'data'    => $pedido,
         ];
     }
 
-    public function voidInvoice(int $cod_orden, array $ordFactura, array $infoFacturacion): array {
+    public function cancelComanda(int $cod_orden, array $comanda, array $infoFacturacion): array {
+        if ($comanda['estado'] !== 'ABIERTA') {
+            return ['success' => 0, 'mensaje' => "La comanda de Runfood está {$comanda['estado']}, no se puede anular por aquí"];
+        }
+
         require_once "clases/cl_ordenes.php";
         $ClOrdenes = new cl_ordenes();
-        $motivo = $ClOrdenes->getMotivoAnulacion($cod_orden);
+        $motivo = $ClOrdenes->getMotivoAnulacion($cod_orden) ?: "Orden anulada en Taste";
+        mylogFile("runfood_anulacion", json_encode(["id" => $comanda['external_order_id'], "motivo" => $motivo]), "COMANDA_CANCEL");
 
-        mylogFile("runfood_anulacion", json_encode(["id" => $ordFactura['clave_acceso'], "motivo" => $motivo]), "ORDER_CANCEL");
-
-        $result = $this->client->cancelOrder($ordFactura['clave_acceso'], $motivo);
+        $result = $this->client->cancelOrder($comanda['external_order_id'], $motivo);
         if (!$result) {
-            return ['success' => 0, 'mensaje' => 'No se pudo anular la orden en Runfood. ' . $this->client->msgError . ' (los pedidos ya cerrados en Runfood no se pueden eliminar)'];
+            return ['success' => 0, 'mensaje' => 'No se pudo anular la comanda en Runfood. ' . $this->client->msgError];
+        }
+        setEstadoComandaOrden($comanda['cod_orden_comanda'], 'ANULADA');
+        return ['success' => 1, 'mensaje' => 'Comanda anulada en Runfood correctamente', 'data' => $result];
+    }
+
+    public function voidInvoice(int $cod_orden, array $ordFactura, array $infoFacturacion): array {
+        // Runfood solo permite DELETE de pedidos abiertos: una factura emitida se anula con nota de
+        // crédito desde el POS. Se intenta igual por si el pedido quedó abierto en Runfood.
+        $result = $this->client->cancelOrder($ordFactura['clave_acceso'], "Orden anulada en Taste");
+        if (!$result) {
+            return ['success' => 0, 'mensaje' => 'La orden ya está facturada en Runfood: la anulación requiere nota de crédito y debe hacerse desde el POS de Runfood. ' . $this->client->msgError];
         }
 
         return [
@@ -69,7 +148,7 @@ class RunfoodProvider implements BillingProviderInterface {
     }
 
     public function saveError(int $cod_orden, string $motivo): void {
-        // Runfood no expone endpoint de errores — se puede loggear localmente si se requiere
+        saveErrorFacturacion($cod_orden, 'RUNFOOD', $motivo);
     }
 
     public function canVoid(int $cod_orden, string &$mensaje): bool {
@@ -83,19 +162,93 @@ class RunfoodProvider implements BillingProviderInterface {
     }
 
     public function adjustInventory(int $cod_orden, string $tipo): array {
-        return ['success' => 1, 'mensaje' => 'Runfood no gestiona inventario en este sistema', 'skipped' => true];
+        // El inventario lo mueve Runfood con las líneas (y modifiers) del pedido.
+        return ['success' => 1, 'mensaje' => 'Runfood gestiona el inventario con el pedido', 'skipped' => true];
     }
 
     // ─── Privados ────────────────────────────────────────────────────────────
 
+    /** Factura la cuenta de un pedido abierto previamente (comanda) con los datos de cobro del schema. */
+    private function facturarComanda(array $comanda, array $schema, array $infoFacturacion): array {
+        $tabId = $comanda['external_tab_id'];
+        if ($tabId === null || $tabId === '') {
+            $pedido = $this->client->getOrder($comanda['external_order_id']);
+            $tabId = $pedido['tabs'][0]['id'] ?? null;
+            if ($tabId === null) {
+                return ['success' => 0, 'mensaje' => 'No se pudo obtener la cuenta (tab) del pedido en Runfood. ' . $this->client->msgError];
+            }
+        }
+
+        $tab = $schema['tabs'][0];
+        $cobro = [
+            'billing'  => $tab['billing'],
+            'payments' => $tab['payments'],
+            'total'    => $tab['total'],
+            'print'    => true,
+        ];
+        mylogFile("runfood", json_encode($cobro), "TAB_INVOICE_REQUEST");
+
+        $factura = $this->client->invoiceTab($comanda['external_order_id'], $tabId, $cobro);
+        if (!$factura) {
+            $mensaje = 'No se pudo facturar la comanda en Runfood. ' . $this->client->msgError;
+            if ($this->client->lastHttpCode == 422) {
+                $mensaje .= ' (el pedido abierto en Runfood no cuadra con la orden: ¿se modificó la orden después de enviar la comanda?)';
+            }
+            return ['success' => 0, 'mensaje' => $mensaje];
+        }
+
+        setEstadoComandaOrden($comanda['cod_orden_comanda'], 'FACTURADA');
+        return $this->resultadoFactura($comanda['external_order_id'], $factura, $infoFacturacion, $factura);
+    }
+
     /**
-     * Nueva API de Runfood: items por SKU (ya no por id numérico interno), agrupados en tabs.
-     * NOTA: para opciones "determinantes" (ej. masa verde/maduro/pintón de un Bolón) que hoy
-     * resuelven vía tb_productos_opciones_detalle_facturacion, el item resultante sigue saliendo
-     * con unit_price=0 igual que en armarSchemaDeprecated — ese es el "PROBLEMON" pendiente de
-     * decidir (ver conversación), no se resolvió aquí todavía.
+     * 409 al crear el pedido cerrado: el external_id ya existe en Runfood pero no teníamos la comanda
+     * registrada (ej. se cayó la conexión tras enviarla). Si sigue abierto se factura; si ya estaba
+     * facturado se registra tal cual, sin volver a cobrar.
      */
-    private function armarSchema(int $cod_orden, array $infoFacturacion, string &$mensaje) {
+    private function facturarPedidoExistente(int $cod_orden, array $schema, array $infoFacturacion): array {
+        $orderId = $this->client->lastResponse['id'] ?? null;
+        $pedido = $orderId ? $this->client->getOrder($orderId) : false;
+        if (!$pedido) {
+            return ['success' => 0, 'mensaje' => 'La orden ya existe en Runfood pero no se pudo consultar. ' . $this->client->msgError];
+        }
+        $tabId = $pedido['tabs'][0]['id'] ?? null;
+
+        if ($pedido['status'] === 'open') {
+            saveComandaOrden($cod_orden, self::CODIGO_SISTEMA, $infoFacturacion['cod_sucursal'], $orderId, $tabId, $pedido['order_number'] ?? '', 'ABIERTA');
+            return $this->facturarComanda(getComandaOrden($cod_orden), $schema, $infoFacturacion);
+        }
+
+        if ($pedido['status'] === 'closed') {
+            $facturas = $this->client->getOrderInvoices($orderId);
+            $factura = $facturas['data'][0] ?? ($facturas[0] ?? ($pedido['invoices'][0] ?? null));
+            saveComandaOrden($cod_orden, self::CODIGO_SISTEMA, $infoFacturacion['cod_sucursal'], $orderId, $tabId, $pedido['order_number'] ?? '', 'FACTURADA');
+            return $this->resultadoFactura($orderId, $factura, $infoFacturacion, $pedido);
+        }
+
+        return ['success' => 0, 'mensaje' => "La orden ya existe en Runfood en estado {$pedido['status']} (pedido #{$orderId}), no se puede facturar"];
+    }
+
+    /** clave_acceso guarda el id del pedido en Runfood (lo usa voidInvoice); num_factura, el número del comprobante. */
+    private function resultadoFactura($orderId, ?array $factura, array $infoFacturacion, $raw): array {
+        $numero = trim($factura['fiscalization']['invoiceNumber'] ?? ($factura['number'] ?? ''));
+        return [
+            'success'         => 1,
+            'mensaje'         => 'Orden facturada en Runfood correctamente',
+            'external_id'     => $orderId,
+            'document_number' => $numero ?: ($factura['id'] ?? $orderId),
+            'estado'          => 'CREADA',
+            'cod_proveedor'   => $infoFacturacion['cod_sucursal'],
+            'tipo_documento'  => $infoFacturacion['tipo_documento'],
+            'data'            => $raw,
+        ];
+    }
+
+    /**
+     * Pedido para POST /orders. $status 'open' = comanda (sin cobro); 'closed' = venta directa,
+     * con billing, payments y total en la cuenta.
+     */
+    private function armarSchema(int $cod_orden, array $infoFacturacion, string &$mensaje, string $status) {
         require_once "clases/cl_ordenes.php";
         require_once "clases/cl_usuarios.php";
         require_once "clases/cl_productos.php";
@@ -103,6 +256,7 @@ class RunfoodProvider implements BillingProviderInterface {
         $ClOrdenes   = new cl_ordenes();
         $Clusuarios  = new cl_usuarios();
         $Clproductos = new cl_productos();
+        $codSucursal = $infoFacturacion['cod_sucursal'];
 
         $orden = $ClOrdenes->get_orden_array($cod_orden);
         if (!$orden) {
@@ -112,155 +266,296 @@ class RunfoodProvider implements BillingProviderInterface {
 
         $items = [];
         foreach ($orden['detalle'] as $item) {
-            $resp = getProductoById($item['cod_producto'], $infoFacturacion['cod_sucursal']);
-
-            $resultado = ['principales' => [], 'adicionales' => []];
-            if (!empty($item['opciones'])) {
-                $resultado = $this->armarItemsAdicionales($item['opciones'], $item['cantidad'], $infoFacturacion['cod_sucursal'], $Clproductos);
-            }
-
-            if (!empty($resultado['principales'])) {
-                // La opción elegida (ej. masa) determina el producto real a facturar:
-                // reemplaza al padre genérico y lleva el precio/cantidad reales del item.
-                foreach ($resultado['principales'] as $principal) {
-                    $items[] = [
-                        'sku'        => $principal['sku'],
-                        'quantity'   => intval($item['cantidad']),
-                        'unit_price' => (float)$item['precio'],
-                        'notes'      => $item['comentarios'] ?: $principal['notes'],
-                        'metadata'   => ['cod_producto' => $item['cod_producto']],
-                    ];
-                }
-            } else if ($resp) {
-                $items[] = [
-                    'sku'        => (string)($resp['sku'] ?: $resp['id']),
-                    'quantity'   => intval($item['cantidad']),
-                    'unit_price' => (float)$item['precio'],
-                    'notes'      => $item['comentarios'] ?? "",
-                    'metadata'   => ['cod_producto' => $item['cod_producto']],
-                ];
-            }
-
-            foreach ($resultado['adicionales'] as $adicional) {
-                $items[] = $adicional;
+            $lineas = $this->armarLineas($item, $codSucursal, $Clproductos, $mensaje);
+            if ($lineas === false) return false;
+            foreach ($lineas as $linea) {
+                $items[] = $linea;
             }
         }
 
         if ($orden['envio'] > 0) {
-            $resp = getEnvioyAdicionalByAlias("ENVIO_DOMICILIO", cod_empresa, $infoFacturacion['cod_sucursal'], self::CODIGO_SISTEMA);
+            $resp = getEnvioyAdicionalByAlias("ENVIO_DOMICILIO", cod_empresa, $codSucursal, self::CODIGO_SISTEMA);
             if (!$resp) {
                 $mensaje = "No esta ligado el servicio a Domicilio con Runfood, por favor ir al módulo de integraciones";
                 return false;
             }
+            // Si la empresa no grava el envío, Taste lo suma completo a subtotal0; si lo grava, su neto es envio_iva.
+            $gravaEnvio = (int)empresaGravaIva(cod_empresa) === 1;
             $items[] = [
-                'sku'        => (string)$resp['id'],
-                'quantity'   => 1,
-                'unit_price' => (float)number_format($orden['envio'], 2),
-                'notes'      => "Envío a domicilio",
-                'metadata'   => [],
+                'sku'            => (string)$resp['id'],
+                'quantity'       => 1,
+                'unit_price'     => round((float)($gravaEnvio ? $orden['envio_iva'] : $orden['envio']), 2),
+                'vat_applicable' => $gravaEnvio,
+                'notes'          => "Envío a domicilio",
             ];
         }
 
-        $usuario = $orden['datos_facturacion'] ?: $Clusuarios->get($orden['cod_usuario']);
-        $customer = [
-            'full_name' => $usuario['nombre'] ?? 'Consumidor Final',
-            'tax_id'    => $usuario['num_documento'] ?? '9999999999',
-            'email'     => $usuario['correo'] ?? '',
-            'phone'     => $usuario['telefono'] ?? '',
+        $nombreCliente = trim(($orden['nombre'] ?? '') . ' ' . ($orden['apellido'] ?? ''));
+        $tab = [
+            'external_id' => "tab-" . $orden['cod_orden'],
+            'name'        => mb_substr($nombreCliente ?: "Orden #" . $orden['cod_orden'], 0, 120),
+            'items'       => $items,
         ];
 
-        $serviceType = ($orden['is_envio'] == 1) ? 'delivery' : 'pickup';
+        if ($status === 'closed') {
+            $total = round((float)$orden['total'], 2);
+            $pagos = $this->armarPagos($orden, $codSucursal, $total, $mensaje);
+            if ($pagos === false) return false;
 
+            $tab['billing']  = $this->armarBilling($orden, $Clusuarios);
+            $tab['payments'] = $pagos;
+            $tab['total']    = $total;
+            $this->verificarTotal($orden, $items, $total);
+        }
+
+        $esDelivery = ($orden['is_envio'] == 1);
         $pedido = [
             'external_id'  => (string)$orden['cod_orden'],
-            'reference'    => "Orden #" . $orden['cod_orden'],
-            'tabs'         => [[
-                'external_id' => "tab-" . $orden['cod_orden'],
-                'name'        => "Pedido",
-                'reference'   => "",
-                'items'       => $items,
-            ]],
-            'service_type' => $serviceType,
-            'table_number' => null,
-            'customer'     => $customer,
+            'reference'    => "Taste #" . $orden['cod_orden'],
+            'status'       => $status,
+            'print'        => true,
+            'service_type' => $esDelivery ? 'delivery' : 'pickup',
+            'tabs'         => [$tab],
         ];
-
-        if ($serviceType === 'delivery') {
-            $pedido['delivery_address'] = [
-                'address'   => $orden['referencia'] ?? '',
-                'reference' => $orden['referencia2'] ?? '',
-                'lat'       => isset($orden['latitud']) ? (float)$orden['latitud'] : null,
-                'lng'       => isset($orden['longitud']) ? (float)$orden['longitud'] : null,
-            ];
+        if (!empty($orden['mesa_referencia'])) {
+            $pedido['table_number'] = mb_substr($orden['mesa_referencia'], 0, 20);
         }
 
-        mylogFile("logArmarFacturaRunfood", json_encode($pedido, JSON_NUMERIC_CHECK), "RUNFOOD_SCHEMA");
+        if ($esDelivery) {
+            $direccion = [
+                'address'   => $orden['referencia'] ?? '',
+                'reference' => $orden['referencia2'] ?? '',
+            ];
+            if (is_numeric($orden['latitud'] ?? null) && is_numeric($orden['longitud'] ?? null)) {
+                $direccion['lat'] = (float)$orden['latitud'];
+                $direccion['lng'] = (float)$orden['longitud'];
+            }
+            $pedido['delivery_address'] = $direccion;
+        }
+
+        mylogFile("logArmarFacturaRunfood", json_encode($pedido), "RUNFOOD_SCHEMA");
 
         return $pedido;
     }
 
-    private function armarItemsAdicionales(array $opciones, $cantidad, $idBussinessInvoices, $Clproductos): array {
-        $principales = [];
-        $adicionales = [];
+    /**
+     * Líneas de Runfood para un item de la orden:
+     *  - La línea del producto (o de la opción es_principal que lo reemplaza), con precio neto,
+     *    descuento y, como modifiers, lo que va a cocina/inventario sin costo (bebida del combo,
+     *    ingredientes de la opción).
+     *  - Una línea propia por cada opción con costo que esté ligada a un producto de Runfood.
+     *  - El costo de opciones que no tienen producto ligado va al producto genérico ADICIONALES si
+     *    existe; si no, se suma al precio del producto para que el total cuadre igual.
+     */
+    private function armarLineas(array $item, $codSucursal, $Clproductos, string &$mensaje) {
+        $cantidad = (float)$item['cantidad'];
+        $precioUnitario = (float)$item['precio_no_tax'];
+        // subtotal_0/12 ya es el neto de la línea con el descuento aplicado (sin opciones).
+        $netoLinea = round((float)$item['subtotal_0'] + (float)$item['subtotal_12'], 2);
+        $descuento = max(0, round(round($precioUnitario * $cantidad, 2) - $netoLinea, 2));
 
-        foreach ($opciones as $opcion) {
-            foreach ($opcion["detalles"] as $detalle) {
+        $principal = null;
+        $modifiers = [];
+        $lineasOpciones = [];
+        $opcionesCobradas = 0.0;
 
-                // Mapeo directo a producto Runfood (tb_productos_opciones_detalle_facturacion).
-                // es_principal=1 -> la opción ES el producto a facturar (reemplaza al padre, precio real del item).
-                // es_principal=0 -> línea aparte; precio = precio_adicional real de la opción (0 si es una opción
-                // libre sin costo, o el cargo de la venta cruzada si lo tiene). No se asume 0 a la fuerza.
-                $mappedProduct = $Clproductos->getProductoFromOpcionDetalleFacturacion($detalle["id"], $idBussinessInvoices);
-                if ($mappedProduct) {
-                    if ((int)$mappedProduct['es_principal'] == 1) {
-                        if (!empty($principales)) {
-                            mylogFile("runfood_warning", "Mas de una opcion marcada como es_principal para el mismo item (cod_producto_opciones_detalle=" . $detalle["id"] . "), se ignora y se usa solo la primera.", "RUNFOOD_ES_PRINCIPAL_DUPLICADO");
-                        } else {
-                            $principales[] = [
-                                'sku'   => (string)($mappedProduct['sku'] ?: $mappedProduct['id_runfood']),
-                                'notes' => $mappedProduct['nombre_runfood'] ?? "",
-                            ];
+        foreach (($item['opciones'] ?? []) as $opcion) {
+            foreach ($opcion['detalles'] as $detalle) {
+                $qty = (float)$detalle['cantidad'];   // ya viene multiplicada por la cantidad del item
+                $precioOpcion = (float)($detalle['precio_adicional_no_tax'] ?? 0);
+                $skuOpcion = null;
+                $nombreOpcion = $detalle['text'] ?? '';
+
+                if ($Clproductos->esOpcionTipoProducto($detalle['id'])) {
+                    // Opción que es un producto real: se usa el mapeo del propio producto.
+                    $producto = $Clproductos->getFacturacionProductoOpcion($detalle['id'], $codSucursal);
+                    if ($producto) $skuOpcion = (string)($producto['sku'] ?: $producto['id']);
+                } else {
+                    // Opción abierta: mapeo propio de la opción.
+                    $mapeo = $Clproductos->getProductoFromOpcionDetalleFacturacion($detalle['id'], $codSucursal);
+                    if ($mapeo) {
+                        $skuOpcion = (string)($mapeo['sku'] ?: $mapeo['id_runfood']);
+                        $nombreOpcion = $mapeo['nombre_runfood'] ?: $nombreOpcion;
+                        if ((int)$mapeo['es_principal'] === 1) {
+                            if ($principal === null) {
+                                $principal = ['sku' => $skuOpcion, 'nombre' => $nombreOpcion];
+                            } else {
+                                mylogFile("runfood_warning", "Mas de una opcion es_principal para el mismo item (cod_producto_opciones_detalle=" . $detalle["id"] . "), se usa solo la primera.", "RUNFOOD_ES_PRINCIPAL_DUPLICADO");
+                            }
+                            // Su costo (si tiene) queda en el remanente y se suma al producto que reemplaza.
+                            $skuOpcion = null;
                         }
-                    } else {
-                        $precioAdicional = isset($detalle['precio_adicional_no_tax']) ? $detalle['precio_adicional_no_tax'] : ($detalle['precio_adicional'] ?? 0);
-                        $adicionales[] = [
-                            'sku'        => (string)($mappedProduct['sku'] ?: $mappedProduct['id_runfood']),
-                            'quantity'   => intval($cantidad),
-                            'unit_price' => (float)$precioAdicional,
-                            'notes'      => $mappedProduct['nombre_runfood'] ?? "",
-                            'metadata'   => [],
-                        ];
                     }
-                    continue;
                 }
 
-                $productoIsDb = $Clproductos->getProductFromOpcionDetalleIsDatabase($detalle["id"], $idBussinessInvoices);
-                if ($productoIsDb) {
-                    $adicionales[] = [
-                        'sku'        => (string)$productoIsDb['id'],
-                        'quantity'   => (float)number_format($detalle["cantidad"] * $cantidad, 2),
-                        'unit_price' => (float)$productoIsDb['precio'],
-                        'notes'      => "",
-                        'metadata'   => [],
-                    ];
-                }
-
-                $ingredientes = $Clproductos->getProductoOpcionesIngredientes($detalle["id"], $idBussinessInvoices);
-                if ($ingredientes) {
-                    foreach ($ingredientes as $ing) {
-                        $adicionales[] = [
-                            'sku'        => (string)$ing['id'],
-                            'quantity'   => (float)number_format(($ing["valor"] * $detalle["cantidad"]) * $cantidad, 2),
-                            'unit_price' => (float)$ing['precio'],
-                            'notes'      => $ing['ingrediente'],
-                            'metadata'   => [],
+                if ($skuOpcion !== null) {
+                    if ($precioOpcion > 0) {
+                        $lineasOpciones[] = [
+                            'sku'        => $skuOpcion,
+                            'quantity'   => $qty,
+                            'unit_price' => $precioOpcion,
+                            'notes'      => mb_substr($nombreOpcion, 0, 255),
                         ];
+                        $opcionesCobradas += round($precioOpcion * $qty, 2);
+                    } else {
+                        $modifiers[] = ['sku' => $skuOpcion, 'quantity' => round($qty / $cantidad, 4)];
+                    }
+                }
+
+                $ingredientes = $Clproductos->getProductoOpcionesIngredientes($detalle['id'], $codSucursal);
+                foreach (($ingredientes ?: []) as $ing) {
+                    $qtyIngrediente = round(((float)$ing['valor'] * $qty) / $cantidad, 4);
+                    if ($qtyIngrediente > 0) {
+                        $modifiers[] = ['sku' => (string)$ing['id'], 'quantity' => $qtyIngrediente];
                     }
                 }
             }
         }
 
-        return ['principales' => $principales, 'adicionales' => $adicionales];
+        // Lo que se cobró por opciones y no viajó como línea propia.
+        $remanente = round((float)$item['adicional_no_tax_total'] - $opcionesCobradas, 2);
+        if ($remanente > 0) {
+            $adicionales = getEnvioyAdicionalByAlias("ADICIONALES", cod_empresa, $codSucursal, self::CODIGO_SISTEMA);
+            if ($adicionales) {
+                $lineasOpciones[] = [
+                    'sku'        => (string)$adicionales['id'],
+                    'quantity'   => 1,
+                    'unit_price' => $remanente,
+                    'notes'      => "Adicionales",
+                ];
+            } else {
+                $precioUnitario += $remanente / $cantidad;
+            }
+        } else if ($remanente < -0.02) {
+            mylogFile("runfood_warning", "Opciones cobradas ($opcionesCobradas) superan adicional_no_tax_total ({$item['adicional_no_tax_total']}) en cod_orden_detalle={$item['cod_orden_detalle']}", "RUNFOOD_ADICIONALES");
+        }
+
+        if ($principal) {
+            $sku = $principal['sku'];
+            $notas = $item['comentarios'] ?: $principal['nombre'];
+        } else {
+            $resp = getProductoById($item['cod_producto'], $codSucursal, self::CODIGO_SISTEMA);
+            if (!$resp) {
+                $mensaje = "El producto '" . html_entity_decode($item['nombre']) . "' no está ligado a Runfood, por favor ir al módulo de integraciones";
+                return false;
+            }
+            $sku = (string)($resp['sku'] ?: $resp['id']);
+            $notas = $item['comentarios'] ?? "";
+        }
+
+        $linea = [
+            'sku'        => $sku,
+            'quantity'   => $cantidad,
+            'unit_price' => round($precioUnitario, 6),
+            // Lo que Taste cobró de verdad: con IVA si la línea cayó en subtotal_12.
+            'vat_applicable' => ((float)$item['subtotal_12'] > 0) || ((float)$item['subtotal_0'] == 0 && $item['cobra_iva'] == 1),
+            'metadata'   => ['cod_producto' => (string)$item['cod_producto']],
+        ];
+        if ($descuento > 0) $linea['discount'] = $descuento;
+        if ($notas) $linea['notes'] = mb_substr($notas, 0, 255);
+        if ($modifiers && !self::USAR_MODIFIERS) {
+            // Mientras Runfood no facture cuentas abiertas con modifiers, van como líneas a $0:
+            // igual llegan a cocina y mueven inventario. La cantidad pasa de "por unidad" a total.
+            foreach ($modifiers as $modifier) {
+                $lineasOpciones[] = [
+                    'sku'        => $modifier['sku'],
+                    'quantity'   => round($modifier['quantity'] * $cantidad, 4),
+                    'unit_price' => 0,
+                ];
+            }
+        } else if ($modifiers) {
+            if (count($modifiers) > self::MAX_MODIFIERS) {
+                mylogFile("runfood_warning", "Item con " . count($modifiers) . " modifiers, Runfood acepta " . self::MAX_MODIFIERS . " (cod_orden_detalle={$item['cod_orden_detalle']})", "RUNFOOD_MODIFIERS");
+            }
+            $linea['modifiers'] = array_slice($modifiers, 0, self::MAX_MODIFIERS);
+        }
+
+        return array_merge([$linea], $lineasOpciones);
+    }
+
+    /** Consumidor final se declara explícito (Runfood no lo asume). */
+    private function armarBilling(array $orden, $Clusuarios): array {
+        $consumidorFinal = ['name' => 'CONSUMIDOR FINAL', 'tax_id' => '9999999999999', 'tax_id_type' => 'ruc'];
+
+        $usuario = $orden['datos_facturacion'] ?: $Clusuarios->get($orden['cod_usuario']);
+        if (!$usuario) return $consumidorFinal;
+
+        $documento = preg_replace('/[^A-Za-z0-9]/', '', $usuario['num_documento'] ?? '');
+        if ($documento === '' || preg_match('/^9+$/', $documento)) return $consumidorFinal;
+
+        if (ctype_digit($documento) && strlen($documento) == 13) {
+            $tipo = 'ruc';
+        } else if (ctype_digit($documento) && strlen($documento) == 10) {
+            $tipo = 'cedula';
+        } else {
+            $tipo = 'pasaporte';
+        }
+
+        $billing = [
+            'name'        => trim($usuario['nombre'] ?? '') ?: 'CONSUMIDOR FINAL',
+            'tax_id'      => $documento,
+            'tax_id_type' => $tipo,
+        ];
+        if (filter_var($usuario['correo'] ?? '', FILTER_VALIDATE_EMAIL)) $billing['email'] = $usuario['correo'];
+        if (!empty($usuario['telefono'])) $billing['phone'] = (string)$usuario['telefono'];
+        return $billing;
+    }
+
+    /** Runfood exige que los pagos sumen el total exacto (±0.01) y nunca ajusta un pago. */
+    private function armarPagos(array $orden, $codSucursal, float $total, string &$mensaje) {
+        $pagos = [];
+        foreach (($orden['pagos'] ?: []) as $pago) {
+            $monto = round((float)$pago['monto'], 2);
+            if ($monto <= 0) continue;
+
+            $forma = $this->getFormaPago($pago['forma_pago'], $codSucursal);
+            if (!$forma) {
+                $mensaje = "La forma de pago '" . html_entity_decode($pago['descripcion']) . "' no está ligada a Runfood, por favor ir al módulo de integraciones";
+                return false;
+            }
+            $linea = ['payment_method_id' => (int)$forma['id'], 'amount' => $monto];
+            if ($pago['forma_pago'] === 'E' && $orden['is_suelto'] == 1 && (float)$orden['monto_suelto'] > $monto) {
+                $linea['tendered'] = round((float)$orden['monto_suelto'], 2);
+            }
+            $pagos[] = $linea;
+        }
+
+        if (!$pagos) {
+            $mensaje = "La orden no tiene pagos registrados para facturar en Runfood";
+            return false;
+        }
+
+        $suma = round(array_sum(array_column($pagos, 'amount')), 2);
+        if (abs($suma - $total) > 0.01) {
+            // Un único pago con diferencia de redondeo se alinea al total; otra diferencia es un error real.
+            if (count($pagos) == 1 && abs($suma - $total) <= 0.02) {
+                $pagos[0]['amount'] = $total;
+            } else {
+                $mensaje = "Los pagos de la orden ($suma) no cuadran con su total ($total)";
+                return false;
+            }
+        }
+        return $pagos;
+    }
+
+    /**
+     * Replica el cálculo de Runfood (IVA sobre la base gravada, redondeado) para dejar en el log
+     * los descuadres antes de que Runfood responda 422 total_mismatch. No bloquea el envío.
+     */
+    private function verificarTotal(array $orden, array $items, float $total): void {
+        $baseGravada = 0.0;
+        $baseCero = 0.0;
+        foreach ($items as $linea) {
+            $neto = round($linea['unit_price'] * $linea['quantity'], 2) - ($linea['discount'] ?? 0);
+            // Las líneas de opciones/adicionales no declaran vat_applicable; en Taste siguen al local.
+            $gravada = $linea['vat_applicable'] ?? ((float)$orden['iva'] > 0);
+            if ($gravada) $baseGravada += $neto; else $baseCero += $neto;
+        }
+        $tasa = (float)$orden['iva_porcentaje'];
+        $esperado = round($baseGravada + $baseCero + round($baseGravada * $tasa / 100, 2), 2);
+        if (abs($esperado - $total) > 0.01) {
+            mylogFile("runfood_warning", "cod_orden={$orden['cod_orden']} total Taste=$total, calculo tipo Runfood=$esperado (base gravada=$baseGravada, base 0=$baseCero, iva=$tasa%)", "RUNFOOD_TOTAL_DESCUADRE");
+        }
     }
 
     /** Respaldo de la versión anterior del schema (API previa de Runfood, basada en ids numéricos). No se usa actualmente. */
@@ -543,7 +838,8 @@ class RunfoodProvider implements BillingProviderInterface {
     private function getFormaPago(string $forma, $cod_proveedor): ?array {
         $query = "SELECT * FROM tb_formas_pago_facturacion
                   WHERE cod_forma_pago = '$forma'
-                  AND cod_contifico_empresa = $cod_proveedor";
+                  AND cod_contifico_empresa = $cod_proveedor
+                  AND cod_sistema_facturacion = " . self::CODIGO_SISTEMA;
         return Conexion::buscarRegistro($query) ?: null;
     }
 }
